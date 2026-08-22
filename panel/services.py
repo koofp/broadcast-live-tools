@@ -7,6 +7,7 @@ import json
 import os
 import re
 import subprocess
+import threading
 import time
 import urllib.request
 from collections import deque
@@ -29,6 +30,8 @@ PS_CLEAN = str(ROOT / "cleanup.ps1")
 LOG_DIR = ROOT / "logs" / "pipeline"
 
 _PLACEHOLDER_MARK = "[无语音内容]"
+QUEUE_LOCK = threading.Lock()
+_run_lock_stream = None
 
 DEFAULT_PROMPT = """你是资深直播内容分析师。以下字幕来自语音识别，可能含同音误听，
 请结合语境自行纠正（游戏术语、DOTA2英雄名、装备名等）。
@@ -59,7 +62,7 @@ def _ps(script: str, *args: str, timeout: int = 300) -> str:
 
 
 def lock_info() -> dict:
-    """锁的结构化信息：谁持有(时间戳)/多久——供 409 与面板展示"""
+    """锁的结构化信息。探测方式=独占打开（进程崩溃遗留的陈旧锁自动清除）"""
     if not LOCK.exists():
         return {"locked": False}
     age = round(time.time() - LOCK.stat().st_mtime)
@@ -68,8 +71,15 @@ def lock_info() -> dict:
         holder = LOCK.read_text(encoding="utf-8", errors="ignore")[:80]
     except Exception:
         pass
-    return {"locked": True, "age_sec": age, "holder": holder,
-            "force_available": age > 7200}
+    # 独占探测：能打开说明持有进程已死 → 清除陈旧锁
+    try:
+        with open(LOCK, "r+b"):
+            pass
+        LOCK.unlink(missing_ok=True)
+        return {"locked": False, "stale_cleaned": True}
+    except PermissionError:
+        return {"locked": True, "age_sec": age, "holder": holder,
+                "force_available": age > 7200}
 
 
 def status() -> dict:
@@ -266,16 +276,18 @@ def _save_queue(q: dict):
 
 def enqueue(name: str, path: str, priority: int = 5) -> dict:
     """priority: 0=用户点按(插队) 5=批量补位；同文件已有 queued/running 则跳过"""
-    q = _load_queue()
-    for j in q["jobs"]:
-        if j["path"] == path and j["status"] in ("queued", "running"):
-            return {"queued": False, "reason": "已在队列中", "id": j["id"]}
-    job = {"id": f"j{q['next_id']}", "name": name, "path": str(path),
-           "priority": priority, "status": "queued",
-           "created": time.strftime("%H:%M:%S"), "error": None}
-    q["jobs"].append(job)
-    q["next_id"] += 1
-    _save_queue(q)
+    with QUEUE_LOCK:
+        q = _load_queue()
+        for j in q["jobs"]:
+            if j["path"] == path and j["status"] in ("queued", "running"):
+                return {"queued": False, "started": False,
+                        "reason": "已在队列中", "id": j["id"]}
+        job = {"id": f"j{q['next_id']}", "name": name, "path": str(path),
+               "priority": priority, "status": "queued",
+               "created": time.strftime("%H:%M:%S"), "error": None}
+        q["jobs"].append(job)
+        q["next_id"] += 1
+        _save_queue(q)
     return {"queued": True, "id": job["id"]}
 
 
@@ -291,40 +303,79 @@ def queue_snapshot() -> list:
 
 def requeue_stale_running():
     """面板启动时：把上次中断的 running 重置为 queued（断电恢复）"""
-    q = _load_queue()
-    changed = False
-    for j in q["jobs"]:
-        if j["status"] == "running":
-            j["status"] = "queued"; changed = True
-    if changed:
-        _save_queue(q)
+    with QUEUE_LOCK:
+        q = _load_queue()
+        changed = False
+        for j in q["jobs"]:
+            if j["status"] == "running":
+                j["status"] = "queued"; changed = True
+        if changed:
+            _save_queue(q)
+
+
+def defer_job(job_id: str):
+    """Worker 拿不到 run.lock 时把任务退回队列（稍后再跑）"""
+    with QUEUE_LOCK:
+        q = _load_queue()
+        for j in q["jobs"]:
+            if j["id"] == job_id and j["status"] == "running":
+                j["status"] = "queued"
+                _save_queue(q)
+                return
+
+
+def acquire_run_lock() -> bool:
+    """非阻塞独占获取 run.lock（Worker 与 process_all.ps1 的互斥点）"""
+    if lock_info().get("locked"):
+        return False
+    try:
+        global _run_lock_stream
+        _run_lock_stream = open(LOCK, "x")
+        _run_lock_stream.write(f"worker pid={os.getpid()} t={time.strftime('%H:%M:%S')}")
+        _run_lock_stream.flush()
+        return True
+    except FileExistsError:
+        return False
+    except Exception:
+        return False
+
+
+def release_run_lock():
+    try:
+        _run_lock_stream.close()
+    except Exception:
+        pass
+    LOCK.unlink(missing_ok=True)
 
 
 def pop_next_job() -> dict | None:
-    q = _load_queue()
-    cand = [j for j in q["jobs"] if j["status"] == "queued"]
-    if not cand:
-        return None
-    job = min(cand, key=lambda j: (j["priority"], int(j["id"][1:])))
-    job["status"] = "running"
-    _save_queue(q)
-    return job
+    with QUEUE_LOCK:
+        q = _load_queue()
+        cand = [j for j in q["jobs"] if j["status"] == "queued"]
+        if not cand:
+            return None
+        job = min(cand, key=lambda j: (j["priority"], int(j["id"][1:])))
+        job = dict(job)
+        job["status"] = "running"
+        _save_queue(q)
+        return job
 
 
 def finish_job(job_id: str, ok: bool, error: str | None = None):
-    q = _load_queue()
-    for j in q["jobs"]:
-        if j["id"] == job_id:
-            j["status"] = "done" if ok else "failed"
-            j["error"] = error
-            break
-    # 只保留最近 60 条，防无限膨胀
-    if len(q["jobs"]) > 60:
-        done_ids = {j["id"] for j in q["jobs"] if j["status"] == "done"}
-        keep = [j for j in q["jobs"] if j["status"] != "done"]
-        dones = [j for j in q["jobs"] if j["id"] in done_ids][-30:]
-        q["jobs"] = (keep + dones)[-60:]
-    _save_queue(q)
+    with QUEUE_LOCK:
+        q = _load_queue()
+        for j in q["jobs"]:
+            if j["id"] == job_id:
+                j["status"] = "done" if ok else "failed"
+                j["error"] = error
+                break
+        # 只保留最近 60 条，防无限膨胀
+        if len(q["jobs"]) > 60:
+            done_ids = {j["id"] for j in q["jobs"] if j["status"] == "done"}
+            keep = [j for j in q["jobs"] if j["status"] != "done"]
+            dones = [j for j in q["jobs"] if j["id"] in done_ids][-30:]
+            q["jobs"] = (keep + dones)[-60:]
+        _save_queue(q)
 
 
 # ---------- 房间（settings.toml 解析 + B站直播状态） ----------

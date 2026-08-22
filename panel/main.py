@@ -55,31 +55,39 @@ def _worker_env():
 
 
 def _run_job(job: dict):
-    v = job["path"]
-    base = Path(v).with_suffix("")
-    srt, sum_md = base.with_suffix(".srt"), base.with_suffix(".summary.md")
-    model = str(Path(__file__).resolve().parent.parent / "models" / "faster-whisper-small")
+    # 与 process_all.ps1 的互斥点：拿不到 run.lock → 任务退回队列（稍后重试）
+    if not services.acquire_run_lock():
+        services.defer_job(job["id"])
+        print(f"[job {job['id']}] run.lock 被占用，任务退回队列", flush=True)
+        return
+    try:
+        v = job["path"]
+        base = Path(v).with_suffix("")
+        srt, sum_md = base.with_suffix(".srt"), base.with_suffix(".summary.md")
+        model = str(Path(__file__).resolve().parent.parent / "models" / "faster-whisper-small")
 
-    if not srt.exists():
-        yield_line = f"[job {job['id']}] 转写 {Path(v).name}"
-        print(yield_line, flush=True)
-        subprocess.run(["python", str(BASE.parent / "transcribe_host.py"), v,
-                        "--model", model], env=_worker_env(),
-                       creationflags=BELOW_NORMAL, cwd=str(services.ROOT))
-    if not srt.exists():
-        services.finish_job(job["id"], False, "转写无产出")
-        return
-    if services.is_placeholder_srt(srt):
-        services.finish_job(job["id"], True, "占位（无语音）跳过总结")
-        return
-    if not sum_md.exists():
-        print(f"[job {job['id']}] 总结 {Path(v).name}", flush=True)
-        subprocess.run(["python", str(BASE.parent / "summarize_host.py"), str(srt),
-                        "--prompt-file", str(Path(services.ROOT) / "prompt.txt")],
-                       env=_worker_env(), creationflags=BELOW_NORMAL,
-                       cwd=str(services.ROOT))
-    services.finish_job(job["id"], sum_md.exists(),
-                        None if sum_md.exists() else "总结无产出")
+        if not srt.exists():
+            print(f"[job {job['id']}] 转写 {Path(v).name}", flush=True)
+            subprocess.run(["python", str(BASE.parent / "transcribe_host.py"), v,
+                            "--model", model], env=_worker_env(),
+                           creationflags=BELOW_NORMAL, cwd=str(services.ROOT))
+        if not srt.exists():
+            services.finish_job(job["id"], False, "转写无产出")
+            return
+        if services.is_placeholder_srt(srt):
+            sum_md.write_text("（该分段无语音内容，未生成总结）", encoding="utf-8")
+            services.finish_job(job["id"], True, "占位（无语音）跳过总结")
+            return
+        if not sum_md.exists():
+            print(f"[job {job['id']}] 总结 {Path(v).name}", flush=True)
+            subprocess.run(["python", str(BASE.parent / "summarize_host.py"), str(srt),
+                            "--prompt-file", str(Path(services.ROOT) / "prompt.txt")],
+                           env=_worker_env(), creationflags=BELOW_NORMAL,
+                           cwd=str(services.ROOT))
+        services.finish_job(job["id"], sum_md.exists(),
+                            None if sum_md.exists() else "总结无产出")
+    finally:
+        services.release_run_lock()
 
 
 def _worker_loop():
@@ -138,9 +146,9 @@ async def page_recording(request: Request):
             "current_mb": round(cur.stat().st_size / 2**20) if cur else None,
             "newest_age_min": int((time.time() - segs[0].stat().st_mtime) / 60) if segs else None,
         })
-    unconf = [c for c in cards if not c["configured"]]
+    unconf = len([c for c in cards if not c["configured"]])
     return nav(request, "录制", "recording.html",
-               cards=cards, unconfigured=len(unconf),
+               cards=cards, unconf_count=unconf,
                container=services.status().get("container"))
 
 
