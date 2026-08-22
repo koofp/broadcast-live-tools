@@ -1,0 +1,14 @@
+# 数据与大体量产物（不入库）
+Videos/
+logs/
+models/
+*.mp4
+*.flv
+*.tmp
+*.rawerr
+__pycache__/
+node_modules/
+
+# 密钥与环境
+.env
+*.key

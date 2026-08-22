@@ -1,0 +1,18 @@
+services:
+  bilive:
+    image: bilive-fixed:0.3.1        # 含 WBI 修复版 blrec + openai-whisper
+    container_name: bilive_docker
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:22333:2233"       # 仅本机可访问控制台
+    environment:
+      - RECORD_KEY=Bil1veLocal2026   # 控制台密码（字母+数字）
+      - TZ=Asia/Shanghai
+    volumes:
+      - ./bilive.toml:/app/bilive.toml
+      - ./settings.toml:/app/settings.toml
+      - ./Videos:/app/Videos
+      - ./logs:/app/logs
+      - ./start-local.sh:/app/start.sh   # 本地存档模式：只录制，摘除 scan/upload
+    tty: true
+    stdin_open: true
