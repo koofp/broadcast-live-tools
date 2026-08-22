@@ -1,0 +1,88 @@
+{% extends "base.html" %}
+{% block title %}流水线{% endblock %}
+{% block page %}pipeline{% endblock %}
+{% block content %}
+<div class="grid">
+  <div class="card"><div class="k">锁状态</div><div class="v" id="p-lock">{{ '处理中' if pl.locked else '空闲' }}</div>
+    <div class="hint" id="p-holder">{% if pl.holder %}{{ pl.holder }}{% endif %}</div></div>
+  <div class="card wide"><div class="k">当前处理</div><div class="v sm" id="p-active">{{ pl.active_file or '—' }}</div>
+    <div class="hint" id="p-progress">{% if pl.progress %}已转写至 {{ pl.progress.audio_time }} · {{ pl.progress.count }} 条{% if pl.progress_ts %} · {{ pl.progress_ts }}{% endif %}{% else %}暂无进行中的转写{% endif %}</div></div>
+  <div class="card"><div class="k">失败清单</div><div class="v" id="p-fails">{{ pl.failures|length }}</div><div class="hint">retry.txt 尾部</div></div>
+</div>
+
+<div class="row-actions">
+  <button class="btn primary" id="btn-process-all">▶ 处理全部积压</button>
+  <label class="chk"><input type="checkbox" id="auto-scroll" checked> 自动滚动</label>
+  <span class="mut">每 5 秒刷新日志</span>
+</div>
+
+<h2>实时日志（当前管线日志尾 30 行）</h2>
+<pre class="logbox tall" id="pl-tail">{% for l in pl.tail %}{{ l }}
+{% endfor %}</pre>
+
+<div class="cols">
+<div>
+<h2>失败清单 retry.txt</h2>
+<pre class="logbox" id="retry-list">{% for f in pl.failures %}{{ f }}
+{% endfor %}</pre>
+<button class="btn ghost" id="btn-rerun-fails">↻ 重试全部失败项</button>
+</div>
+<div>
+<h2>归档清理（磁盘 &lt;150GB 时可用）</h2>
+<p class="mut">仅删除「已转写+已总结且超48小时」的最旧分段，未转写的永不触碰。删除留档 deleted.log。</p>
+<div class="row-actions"><button class="btn ghost" id="btn-arch-preview">预览可释放空间</button>
+<button class="btn danger" id="btn-arch-apply">⚠ 执行清理(-Apply)</button></div>
+<pre class="logbox" id="arch-out"></pre>
+</div>
+</div>
+{% endblock %}
+
+{% block pagejs %}
+<script>
+App.pageInit.pipeline = async function(){
+  const paint = (d) => {
+    $('p-lock').textContent = d.locked?'处理中':'空闲';
+    $('p-lock').className = d.locked?'v warn':'v ok';
+    App.q('#p-holder').textContent = d.holder||'';
+    App.q('#p-active').textContent = d.active_file||'—';
+    App.q('#p-progress').textContent = d.progress
+      ? `已转写至 ${d.progress.audio_time} · ${d.progress.count} 条${d.progress_ts?(' · '+d.progress_ts):''}`
+      : '暂无进行中的转写';
+    const tl=App.q('#pl-tail'); const atBottom = tl.scrollTop+tl.clientHeight>=tl.scrollHeight-30;
+    tl.textContent=d.tail.join('\n');
+    if(App.q('#auto-scroll').checked && atBottom!==false) tl.scrollTop=tl.scrollHeight;
+    App.q('#retry-list').textContent=(d.failures||[]).join('\n')||'(空)';
+  };
+  const refresh = async ()=>{ const d=await App.fetchJSON('/api/pipeline'); if(d){paint(d);} };
+  await refresh();
+  let timer=setInterval(refresh,5000);
+  document.addEventListener('visibilitychange',()=>{ // 页面隐藏时暂停轮询
+    if(document.hidden){clearInterval(timer);} else {refresh(); timer=setInterval(refresh,5000);}
+  });
+  App.q('#btn-process-all').onclick=async()=>{
+    const r=await App.postJSON('/api/process',{name:'__all__'});
+    if(!r.started && r.status===409){App.toast('拒绝: 锁被持有 '+Math.round((r.age_sec||0)/60)+' 分钟');}
+    else {App.toast('批量已启动');} refresh();
+  };
+  App.q('#btn-rerun-fails').onclick=async()=>{
+    const list=App.q('#retry-list').textContent.trim(); if(!list){App.toast('无失败项');return;}
+    for(const line of list.split('\n')){
+      const srt=line.split('\t')[0]; if(!srt) continue;
+      const r=await App.postJSON('/api/process',{name:srt.split('\\').pop().replace('.srt','.mp4')});
+      log('重试提交: '+(r.started?'ok':('拒绝('+(r.reason||'锁')+')')));
+      await new Promise(res=>setTimeout(res,1500));
+    }
+  };
+  App.q('#btn-arch-preview').onclick=async()=>{
+    App.q('#arch-out').textContent='加载中…';
+    const d=await(await fetch('/api/archive/preview')).json();
+    App.q('#arch-out').textContent=d.output;
+  };
+  App.q('#btn-arch-apply').onclick=async()=>{
+    if(!confirm('确认执行归档删除？将删除最旧的已转写分段！'))return;
+    const d=await App.postJSON('/api/archive/apply',{confirm:true});
+    App.q('#arch-out').textContent=(d.output||'')+(d.freed_gb?('\n\n释放约 '+d.freed_gb+'GB'):'');
+  };
+};
+</script>
+{% endblock %}

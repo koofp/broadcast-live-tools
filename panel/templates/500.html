@@ -1,0 +1,6 @@
+{% extends "base.html" %}
+{% block title %}{{ code or 500 }}{% endblock %}
+{% block content %}
+<div class="err-page"><div class="code">{{ code or 500 }}</div><p>出错了。详情见 logs/pipeline 与容器日志。</p>
+<a class="btn primary" href="/">返回仪表盘</a></div>
+{% endblock %}

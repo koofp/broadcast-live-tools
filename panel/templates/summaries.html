@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% block title %}总结库{% endblock %}
+{% block page %}summaries{% endblock %}
+{% block content %}
+<div class="toolbar">
+  <input id="q" placeholder="搜索房间/文件…" value="{{ q }}">
+  <span class="mut">{{ rows|length }} 份总结</span>
+</div>
+<table class="tbl"><thead><tr><th>日期</th><th>房间</th><th>视频</th><th>操作</th></tr></thead>
+<tbody id="rows">
+{% for r in rows %}
+<tr data-key="{{ r.room }} {{ r.video |lower }}"><td>{{ r.date }}</td><td>{{ r.room }}</td><td>{{ r.video }}</td>
+<td><a class="btn ghost" href="/summaries/{{ r.room }}/{{ r.base }}.summary.md">阅读</a>
+<a class="btn ghost" href="/srt/{{ r.room }}/{{ r.base }}.srt">字幕</a></td></tr>
+{% else %}<tr><td colspan="4" class="mut center">还没有任何总结。先到流水线页处理分段。</td></tr>{% endfor %}
+</tbody></table>
+{% endblock %}
+
+{% block pagejs %}
+<script>
+App.pageInit.summaries = function(){
+  App.q('#q').oninput = e => {
+    const q=e.target.value.toLowerCase();
+    document.querySelectorAll('#rows tr[data-key]').forEach(tr=>{
+      tr.style.display = tr.dataset.key.includes(q)?'':'none';
+    });
+  };
+};
+</script>
+{% endblock %}

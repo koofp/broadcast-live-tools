@@ -1,0 +1,101 @@
+/* bilive 面板设计系统 v2 —— 深色 · 层次化 */
+:root{
+  --bg:#0b0d10; --bg2:#12151c; --card:#171a21; --card2:#1d212b;
+  --line:#232833; --line2:#2e3543;
+  --fg:#e6e9ef; --mut:#8b93a3;
+  --acc:#5b8cff; --acc2:#7aa5ff; --ok:#3fb96f; --warn:#e8b339; --bad:#e5534b;
+  --radius:12px; --shadow:0 8px 24px rgba(0,0,0,.35);
+}
+*{box-sizing:border-box}
+html,body{height:100%}
+body{margin:0;background:
+   radial-gradient(1200px 500px at 80% -10%, #141a26 0%, transparent 60%),
+   var(--bg);
+  color:var(--fg);font:14px/1.65 "Segoe UI",system-ui,"Microsoft YaHei",sans-serif}
+
+/* ---------- 布局骨架 ---------- */
+.sidebar{position:fixed;inset:0 auto 0 0;width:212px;background:var(--bg2);
+  border-right:1px solid var(--line);display:flex;flex-direction:column;padding:18px 14px;z-index:10}
+.logo{font-weight:700;letter-spacing:.14em;font-size:15px;margin:2px 6px 20px;color:var(--fg)}
+.logo-mark{color:var(--acc);margin-right:6px}
+.sidebar nav{display:flex;flex-direction:column;gap:4px;flex:1}
+.sidebar nav a{display:flex;align-items:center;gap:10px;padding:9px 12px;border-radius:9px;
+  color:var(--mut);text-decoration:none;font-size:13.5px;border:1px solid transparent;transition:.15s}
+.sidebar nav a svg{width:15px;height:15px;fill:currentColor;opacity:.75}
+.sidebar nav a:hover{color:var(--fg);background:#ffffff08}
+.sidebar nav a.active{color:var(--acc2);background:#5b8cff14;border-color:#5b8cff2e;font-weight:600}
+.side-foot{color:#59616f;font-size:11px;padding:8px 10px;border-top:1px solid var(--line)}
+.main{margin-left:212px;padding:26px 30px 60px;min-height:100vh}
+.topbar{display:flex;align-items:center;justify-content:space-between;margin-bottom:22px}
+.topbar h1{font-size:19px;margin:0;font-weight:650}
+
+/* ---------- 组件 ---------- */
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(158px,1fr));gap:13px;margin-bottom:20px}
+.card{background:linear-gradient(180deg,var(--card) 0%,#151821 100%);
+  border:1px solid var(--line);border-radius:var(--radius);padding:14px 16px;transition:.18s}
+.card:hover{border-color:var(--line2)}
+.card .k{color:var(--mut);font-size:10.5px;text-transform:uppercase;letter-spacing:.09em}
+.card .v{font-size:23px;font-weight:650;margin-top:3px;line-height:1.25}
+.card .v small{font-size:11px;color:var(--mut);font-weight:400;margin-left:3px}
+.card .v.sm{font-size:13px;word-break:break-all;font-weight:500}
+.card .hint{font-size:11px;color:var(--mut);margin-top:4px}
+.hint a{color:var(--acc2)}
+.bad-hint{color:var(--bad)}
+a.card{text-decoration:none;display:block}
+a.card:hover{border-color:var(--acc)}
+
+.tbl{width:100%;border-collapse:collapse;background:var(--card);border-radius:var(--radius);
+  overflow:hidden;border:1px solid var(--line)}
+.tbl th,.tbl td{padding:9px 13px;text-align:left;border-bottom:1px solid var(--line);font-size:13px}
+.tbl th{color:var(--mut);font-weight:500;font-size:10.5px;text-transform:uppercase;letter-spacing:.07em;background:#131720}
+.tbl tr:last-child td{border-bottom:none}
+.tbl tr:hover td{background:#ffffff05}
+.tbl.kv th{width:220px;background:transparent}
+
+.badge{display:inline-block;padding:2px 10px;border-radius:99px;font-size:11px;white-space:nowrap}
+.b-done{background:#12351f;color:var(--ok)}.b-srt{background:#3a3012;color:var(--warn)}
+.b-none{background:#38201f;color:#ff8f88}.b-flv{background:#12283a;color:#6cb6ff}
+
+.btn{background:linear-gradient(180deg,var(--acc),#4472e0);border:none;color:#fff;
+  padding:7px 15px;border-radius:8px;cursor:pointer;font-size:12.5px;font-weight:600;transition:.15s}
+.btn:hover{filter:brightness(1.12)} .btn:active{transform:translateY(1px)}
+.btn:disabled{opacity:.45;cursor:not-allowed}
+.btn.ghost{background:transparent;border:1px solid var(--line2);color:var(--fg);font-weight:500}
+.btn.danger{background:linear-gradient(180deg,#e5534b,#c93f38)}
+.row-actions{display:flex;gap:10px;align-items:center;margin:10px 0 22px;flex-wrap:wrap}
+.toolbar{display:flex;gap:10px;align-items:center;margin-bottom:14px;flex-wrap:wrap}
+.mut{color:var(--mut);font-size:12.5px}.center{text-align:center}
+h2{font-size:13.5px;margin:28px 0 10px;color:var(--mut);font-weight:600;letter-spacing:.03em}
+
+select,input[type=text]{background:var(--card);color:var(--fg);border:1px solid var(--line2);
+  border-radius:8px;padding:7px 11px;font-size:13px;outline:none}
+select:focus,input:focus,textarea:focus{border-color:var(--acc)}
+textarea{width:100%;min-height:200px;background:var(--card);color:var(--fg);
+  border:1px solid var(--line2);border-radius:var(--radius);padding:14px;
+  font:12.5px/1.7 Consolas,monospace;resize:vertical}
+.chk{display:flex;gap:6px;align-items:center;color:var(--mut);font-size:12.5px}
+
+.logbox{background:#090b0e;border:1px solid var(--line);border-radius:var(--radius);
+  padding:12px 15px;color:#9aa3b2;font:11.5px/1.75 Consolas,monospace;
+  max-height:260px;overflow:auto;white-space:pre-wrap;word-break:break-all}
+.logbox.tall{max-height:420px}
+.bad-log{color:#ff9a93;border-color:#3a2321}
+.cols{display:grid;grid-template-columns:1fr 1fr;gap:22px}
+@media(max-width:1100px){.cols{grid-template-columns:1fr}}
+
+.doc{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);
+  padding:26px 30px;max-width:860px}
+.doc h1,.doc h2,.doc h3{scroll-margin-top:70px}
+.doc h2{color:var(--fg);font-size:16px;margin:22px 0 10px;padding-bottom:6px;border-bottom:1px solid var(--line)}
+.doc ul,.doc ol{padding-left:22px}.doc li{margin:4px 0}
+.doc code{background:#0d1015;padding:1px 6px;border-radius:5px;font-size:12px;color:#ffd493}
+.doc table{border-color:var(--line)}
+
+.err-page{text-align:center;padding:120px 0}
+.err-page .code{font-size:72px;font-weight:800;color:var(--line2);letter-spacing:.1em}
+.danger-zone{border:1px solid #4a2724;background:#211417;border-radius:var(--radius);padding:16px 18px;margin-top:30px}
+.danger-zone b{color:var(--bad)}
+
+dialog#dlg{background:var(--bg2);color:var(--fg);border:1px solid var(--line2);
+  border-radius:var(--radius);padding:18px;min-width:min(760px,90vw)}
+.dlg-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px}

@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% block title %}{{ title }}{% endblock %}
+{% block page %}srt-view{% endblock %}
+{% block content %}
+<div class="row-actions">
+  <a class="btn ghost" href="/segments">← 返回分段库</a>
+  <button class="btn ghost" id="btn-copy">复制</button>
+  <span class="mut">{{ room }} / {{ video }}{% if truncated %} · 仅显示前 600 行{% endif %}</span>
+</div>
+<pre class="logbox tall" id="srt-body">{{ content }}</pre>
+<script>window.__SRT__={{ content | tojson }};</script>
+{% endblock %}
+
+{% block pagejs %}
+<script>
+App.pageInit.srtView=function(){
+  App.q('#btn-copy').onclick=async()=>{
+    try{await navigator.clipboard.writeText(window.__SRT__);App.toast('已复制');}
+    catch(e){App.toast('复制失败');}
+  };
+};
+</script>
+{% endblock %}

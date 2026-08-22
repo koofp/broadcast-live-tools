@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{% block title %}{{ title }}{% endblock %} · bilive</title>
+<link rel="icon" href="data:,">
+<link rel="stylesheet" href="/static/app.css?v=3">
+</head>
+<body data-page="{% block page %}{% endblock %}">
+<aside class="sidebar">
+  <div class="logo"><span class="logo-mark">▶</span> BILIVE</div>
+  <nav>
+    <a href="/" class="{% if request.url.path == '/' %}active{% endif %}">
+      <svg viewBox="0 0 16 16"><rect x="1" y="1" width="6" height="6" rx="1.5"/><rect x="9" y="1" width="6" height="6" rx="1.5"/><rect x="1" y="9" width="6" height="6" rx="1.5"/><rect x="9" y="9" width="6" height="6" rx="1.5"/></svg>仪表盘</a>
+    <a href="/segments" class="{% if request.url.path.startswith('/segments') %}active{% endif %}">
+      <svg viewBox="0 0 16 16"><path d="M2 3h12v2H2zM2 7h8v2H2zM2 11h12v2H2z"/></svg>分段库</a>
+    <a href="/pipeline" class="{% if request.url.path.startswith('/pipeline') %}active{% endif %}">
+      <svg viewBox="0 0 16 16"><path d="M8 1a7 7 0 1 0 7 7h-2a5 5 0 1 1-5-5V1z"/><path d="M9 3h6l-3 4z"/></svg>流水线</a>
+    <a href="/summaries" class="{% if request.url.path.startswith('/summaries') %}active{% endif %}">
+      <svg viewBox="0 0 16 16"><path d="M3 1h8l3 3v11H3V1zm2 4h6v1.5H5V5zm0 3h6v1.5H5V8zm0 3h4v1.5H5V11z"/></svg>总结库</a>
+    <a href="/settings" class="{% if request.url.path.startswith('/settings') %}active{% endif %}">
+      <svg viewBox="0 0 16 16"><path d="M8 5a3 3 0 1 0 0 6 3 3 0 0 0 0-6zm6.5 3c0-.5-.05-1-.14-1.47l1.6-1.24-1.5-2.6-1.9.77A6.5 6.5 0 0 0 10.6 2.2L10.3.1H5.7L5.4 2.2c-.75.3-1.43.73-2.02 1.26l-1.9-.77-1.5 2.6 1.6 1.24a7.6 7.6 0 0 0 0 2.94l-1.6 1.24 1.5 2.6 1.9-.77c.59.53 1.27.96 2.02 1.26l.3 2.1h4.6l.3-2.1a6.5 6.5 0 0 0 2.02-1.26l1.9.77 1.5-2.6-1.6-1.24c.09-.47.14-.97.14-1.47z" transform="scale(0.9)"/></svg>设置</a>
+  </nav>
+  <div class="side-foot">
+    <div>v{{ version }} · local</div>
+    <div id="side-clock"></div>
+  </div>
+</aside>
+<main class="main">
+  <header class="topbar">
+    <h1>{% block h1 %}{{ title }}{% endblock %}</h1>
+    {% block topbar_extra %}{% endblock %}
+  </header>
+  {% block content %}{% endblock %}
+</main>
+<script src="/static/app.js?v=3"></script>
+{% block pagejs %}{% endblock %}
+</body></html>

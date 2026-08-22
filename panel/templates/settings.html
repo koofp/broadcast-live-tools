@@ -1,0 +1,52 @@
+{% extends "base.html" %}
+{% block title %}设置{% endblock %}
+{% block page %}settings{% endblock %}
+{% block content %}
+<h2>总结提示词</h2>
+<p class="mut">必须包含 <code>{srt}</code> 占位符。保存时自动备份上一版本。</p>
+<textarea id="prompt">{{ prompt }}</textarea>
+<div class="row-actions">
+  <button class="btn primary" id="btn-save">保存</button>
+  {% if prompt_bak %}<button class="btn ghost" id="btn-rollback">↺ 回滚上一版本</button>{% endif %}
+  <span id="save-state" class="mut"></span>
+</div>
+
+<h2>系统信息（只读）</h2>
+<table class="tbl kv">
+<tr><th>镜像</th><td>{{ image }}</td></tr>
+<tr><th>whisper 权重目录</th><td><code>{{ model_dir }}</code></td></tr>
+<tr><th>OPENROUTER_API_KEY</th><td>{% if key_set %}<span class="badge b-done">已配置(环境变量)</span>{% else %}<span class="badge b-none">未设置——总结将失败</span>{% endif %}</td></tr>
+<tr><th>计划任务</th><td>bilive-pipeline(每30分钟) · bilive-panel(登录自启)</td></tr>
+<tr><th>blrec 控制台</th><td><a href="http://127.0.0.1:22333" target="_blank">127.0.0.1:22333</a>（密码 RECORD_KEY）</td></tr>
+</table>
+
+<h2>归档策略（当前参数）</h2>
+<p class="mut">D 盘 &lt;150GB 触发；删除「已转写+已总结且超48小时」的最旧分段，删至 200GB。
+入口在 <a href="/pipeline">流水线页 → 归档清理</a>。blrec 的 recycle_records=false 保证本面板是唯一删除者。</p>
+
+<div class="danger-zone">
+<b>危险区</b>
+<p class="mut">以下操作影响数据与录制，均需二次确认。谨慎使用。</p>
+<div class="row-actions">
+<button class="btn danger" onclick="if(confirm('确认重启 bilive 容器？录制将中断约30秒。'))fetch('/api/docker/restart',{method:'POST'}).then(()=>App.toast('重启指令已下发'))">重启录制容器</button>
+</div>
+</div>
+{% endblock %}
+
+{% block pagejs %}
+<script>
+App.pageInit.settings = function(){
+  App.q('#btn-save').onclick=async()=>{
+    const r=await(await fetch('/api/prompt',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({prompt:App.q('#prompt').value})})).json();
+    $('save-state').textContent=r.saved?(r.detail||'已保存'):('失败: '+r.reason);
+    if(!r.saved)alert(r.reason); else location.reload();
+  };
+  const rb=App.q('#btn-rollback');
+  if(rb)rb.onclick=async()=>{
+    if(!confirm('回滚到上一版本提示词？'))return;
+    const r=await(await fetch('/api/prompt/rollback',{method:'POST'})).json();
+    if(r.restored)location.reload(); else alert(r.reason);
+  };
+};
+</script>
+{% endblock %}
