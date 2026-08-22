@@ -72,6 +72,12 @@ docker run -itd --name bilive_docker --restart unless-stopped \
 | `bilive.toml` | `[asr] asr_method=none/api/deploy`；`tid` 必须填数字（空值会崩，官方模板默认为空是坑）；`[slice]/[cover]` 默认关 |
 | 控制台 | http://localhost:22333 （RECORD_KEY=bilive2024），可热加房间 |
 
+## 5.8 运行记录与已知修复
+
+- **2026-08-22 晚**：批量管线自动消化积压中（计划任务首跑即触发）。深度检查发现并修复：summarize_host.py 重写时漏 `import urllib.request` → 14-08 段总结三连败；已修复并补跑成功。教训：**重写文件后必须 py_compile + 冒烟一次真实调用**。
+- 环境变量注意：用户级 OPENROUTER_API_KEY 对"已存在的父进程树"不生效，新开的计划任务/新终端可见；手动测试时内联 `$env:OPENROUTER_API_KEY=...`。
+- 转写速度实测（small/int8，本机）：30 分钟段 ≈ 11 分钟（2.7x）；孤儿 flv 可直接转写。
+
 ## 5. 扩展资产
 
 ## 5.7 运维自动化套件（2026-08-22 上线，经子代理对抗评审）

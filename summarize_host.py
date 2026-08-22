@@ -5,6 +5,7 @@
 环境变量: OPENROUTER_API_KEY 必须预先设置（不再写入源码）
 """
 import json, sys, os, time, argparse
+import urllib.request
 from pathlib import Path
 
 DEFAULT_PROMPT = """你是资深直播内容分析师。以下字幕来自语音识别（whisper small），可能含同音误听，
