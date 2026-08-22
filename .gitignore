@@ -12,3 +12,7 @@ node_modules/
 # 密钥与环境
 .env
 *.key
+run.lock
+.status_cache.json
+panel_err.log
+retry.txt

@@ -74,6 +74,25 @@ docker run -itd --name bilive_docker --restart unless-stopped \
 
 ## 5. 扩展资产
 
+## 5.7 运维自动化套件（2026-08-22 上线，经子代理对抗评审）
+
+| 组件 | 用途 | 触发 |
+|---|---|---|
+| `status.ps1` | 红黄绿监控：容器/进程/**fake-ip劫持指纹**/分段增长采样/磁盘可录天数/全房间积压；末尾输出 JSON | 手动（10秒） |
+| `process_all.ps1` | 幂等批处理：mp4∪孤儿flv 全房间遍历→small转写→ox-alpha总结；FileStream崩溃安全锁(PID戳/2h强抢)；BelowNormal低优先级；日志 logs\pipeline\*.log(14天轮转)；失败自动进下轮 | **计划任务 bilive-pipeline 每30分钟** / 面板按钮 |
+| `cleanup.ps1` | 归档清理：仅删「srt>1KB 且有summary 且超48h」的最旧段，删至200GB；与 process_all 同锁；删除留档 deleted.log | 磁盘<150GB 时手动 -Apply |
+| `panel.py` | Web面板 127.0.0.1:9090：状态卡(容器/增长/磁盘/积压/DNS劫持)、跨房间分段表+徽章、单文件/全部处理按钮(409互斥)、提示词编辑器(校验{srt})、总结查看 | **计划任务 bilive-panel 登录自启** |
+| 计划任务 | bilive-pipeline(MINUTE/30) ✅Ready；bilive-panel(ATLogOn指定用户) ✅Ready | — |
+
+### 关键运维事实
+- **Docker Desktop 自启已确认**（HKCU Run 键）；重启链路=登录→Docker自启→compose unless-stopped→计划任务，T5 演练通过（restart 后 0 分钟新 flv 出现）
+- 磁盘 autonomy ≈3.5-4 天（~3GB/h）；<150GB 跑 `cleanup.ps1 -Apply`
+- blrec `[space] recycle_records=false`：blrec 不删录像，cleanup.ps1 是唯一删除者
+- `reserve_for_fixing=false`：MOOV 崩溃会删视频，重要场次前临时改 true
+- 转写引擎权重：`models\faster-whisper-small\`（ModelScope 下载；HF/hf-mirror 本网络不可达）
+- OpenRouter key 在用户环境变量 OPENROUTER_API_KEY（源码零硬编码）
+- 已知坑：ps1 必须 UTF-8 BOM（WinPS 中文）；schtasks 内嵌引号会坏→用 Register-ScheduledTask
+
 - `bilibili_transcribe.py`：旁路 srt 转写（groq/local）+ LLM 总结，幂等，支持目录递归
 - `bilive-unlock-check.ps1`：换号/换出口一键验证+重配
 - `tool-comparison.md`：备选工具对比（BililiveRecorder/bililive-go/bilive）

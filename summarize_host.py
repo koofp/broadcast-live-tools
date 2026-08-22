@@ -1,10 +1,13 @@
 # -*- coding: utf-8 -*-
-"""对 srt 做 AI 总结（OpenRouter ox-alpha），输出 summary.md 到同目录。宿主机版。"""
-import json, sys, time, urllib.request, os
+"""srt → AI 总结（OpenRouter ox-alpha）。幂等：已有 .summary.md 跳过。
+用法:
+  python summarize_host.py <srt...> [--prompt-file prompt.txt]
+环境变量: OPENROUTER_API_KEY 必须预先设置（不再写入源码）
+"""
+import json, sys, os, time, argparse
 from pathlib import Path
 
-KEY = os.environ.get("OPENROUTER_API_KEY", "***REMOVED***")
-PROMPT = """你是资深直播内容分析师。以下字幕来自语音识别（whisper small），可能含同音误听，
+DEFAULT_PROMPT = """你是资深直播内容分析师。以下字幕来自语音识别（whisper small），可能含同音误听，
 请结合语境自行纠正（游戏术语、DOTA2英雄名、装备名等）。
 
 字幕：
@@ -18,40 +21,95 @@ PROMPT = """你是资深直播内容分析师。以下字幕来自语音识别�
 ## 疑似识别错误对照表（原文→推测正确词）
 """
 
-def summarize(srt_path: str):
-    srt_path = Path(srt_path)
-    out = srt_path.with_suffix(".summary.md")
-    if out.exists():
-        print("[skip]", out.name)
-        return
-    srt = srt_path.read_text(encoding="utf-8")
+MAX_PROMPT_CHARS = 100000  # 超长截断保护（>6h 直播才可能触发）
+
+
+def call_oxalpha(prompt: str, key: str):
     body = json.dumps({
         "model": "stealth/ox-alpha",
         "max_tokens": 16000,
         "reasoning": {"effort": "low"},
-        "messages": [{"role": "user", "content": PROMPT.replace("{srt}", srt)}],
+        "messages": [{"role": "user", "content": prompt}],
     }).encode()
     req = urllib.request.Request(
         "https://openrouter.ai/api/v1/chat/completions", data=body,
-        headers={"Authorization": "Bearer " + KEY, "Content-Type": "application/json"})
-    t0 = time.time()
-    try:
-        raw = urllib.request.urlopen(req, timeout=600).read().decode("utf-8", "ignore")
-        d = json.loads(raw)
-    except Exception:
-        Path(str(out) + ".rawerr").write_text(raw[:3000], encoding="utf-8")
-        print("[fail] 原始响应已存", str(out) + ".rawerr"); raise
+        headers={"Authorization": "Bearer " + key, "Content-Type": "application/json"})
+    raw = urllib.request.urlopen(req, timeout=900).read().decode("utf-8", "ignore")
+    d = json.loads(raw)
     msg = d["choices"][0]["message"]
     text = msg.get("content")
     if not text:
-        print("[warn] content为空 | finish:", d["choices"][0].get("finish_reason"),
-              "| usage:", json.dumps(d.get("usage", {}))[:200])
-        sys.exit(2)
-    text = text.strip() or sys.exit(2)
-    out.write_text(text, encoding="utf-8")
-    u = d.get("usage", {})
-    print(f"[done] {out.name} | {time.time()-t0:.0f}s | tokens {u.get('total_tokens')}")
+        raise RuntimeError(f"空content finish={d['choices'][0].get('finish_reason')} "
+                           f"usage={json.dumps(d.get('usage', {}))[:160]}")
+    return text
+
+
+def summarize(srt_path: Path, prompt_tpl: str, key: str) -> bool:
+    out = srt_path.with_suffix(".summary.md")
+    if out.exists():
+        print(f"[skip] {out.name} 已存在", flush=True)
+        return True
+    srt = srt_path.read_text(encoding="utf-8")
+    if len(srt) > MAX_PROMPT_CHARS:
+        print(f"[warn] 字幕超长({len(srt)}字符)，截断至{MAX_PROMPT_CHARS}", flush=True)
+        srt = srt[:MAX_PROMPT_CHARS] + "\n…(后文截断)"
+    if "{srt}" not in prompt_tpl:
+        print("[error] 提示词缺少 {srt} 占位符", flush=True)
+        return False
+    prompt = prompt_tpl.replace("{srt}", srt)
+
+    last_err = None
+    for attempt in range(3):  # 2次指数退避重试
+        try:
+            t0 = time.time()
+            text = call_oxalpha(prompt, key)
+            tmp = str(out) + ".tmp"
+            Path(tmp).write_text(text, encoding="utf-8")
+            os.replace(tmp, out)
+            u_snip = ""
+            print(f"[done] {out.name} | {time.time()-t0:.0f}s", flush=True)
+            return True
+        except Exception as e:
+            last_err = repr(e)[:200]
+            wait = 5 * (2 ** attempt)
+            print(f"[retry {attempt+1}/3] {last_err} — {wait}s 后重试", flush=True)
+            time.sleep(wait)
+    print(f"[FAIL] {srt_path.name}: {last_err}", flush=True)
+    retry_log = srt_path.parent.parent.parent / "retry.txt"
+    try:
+        with open(retry_log, "a", encoding="utf-8") as f:
+            f.write(f"{srt_path}\t{last_err}\n")
+    except Exception:
+        pass
+    return False
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("srts", nargs="+")
+    ap.add_argument("--prompt-file", default=str(Path(__file__).resolve().parent / "prompt.txt"))
+    a = ap.parse_args()
+
+    key = os.environ.get("OPENROUTER_API_KEY", "").strip()
+    if not key:
+        print("[fatal] 未设置 OPENROUTER_API_KEY 环境变量", flush=True)
+        sys.exit(1)
+
+    pf = Path(a.prompt_file)
+    tpl = pf.read_text(encoding="utf-8") if pf.exists() else DEFAULT_PROMPT
+    if "{srt}" not in tpl:
+        tpl = DEFAULT_PROMPT
+
+    ok = 0
+    for p in a.srts:
+        try:
+            if summarize(Path(p), tpl, key):
+                ok += 1
+                time.sleep(5)  # 批量调用间隔
+        except Exception as e:
+            print(f"[FAIL-ex] {p}: {repr(e)[:200]}", flush=True)
+    sys.exit(0 if ok == len(a.srts) else 1)
+
 
 if __name__ == "__main__":
-    for p in sys.argv[1:]:
-        summarize(p)
+    main()

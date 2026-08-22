@@ -1,4 +1,4 @@
-# bilive 一键"换账号/出口 → 验证风控 → 重启容器"助手
+﻿# bilive 一键"换账号/出口 → 验证风控 → 重启容器"助手
 # 用法（PowerShell）：
 #   1) 先把目标房间写进 bilive-docker/settings.toml 的 [[tasks]]，并在 [header] 填入新账号完整 cookie
 #   2) .\bilive-unlock-check.ps1 [-RoomId 1832485943] [-Cookie "SESSDATA=...; buvid3=..."]

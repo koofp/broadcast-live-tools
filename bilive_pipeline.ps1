@@ -1,4 +1,4 @@
-# bilive 一键管线：录播 → srt 转写 → AI 总结
+﻿# bilive 一键管线：录播 → srt 转写 → AI 总结
 # 用法示例：
 #   .\bilive_pipeline.ps1 -Video "D:\...\Videos\8139918\xxx.flv"
 #   .\bilive_pipeline.ps1 -VideoDir "D:\...\Videos\8139918" -Model small -SkipExisting
