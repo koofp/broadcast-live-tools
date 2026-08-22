@@ -2,21 +2,33 @@
 """服务层 v2：状态/文件/流水线/归档（无路由逻辑）
 规范：pathlib+utf-8；subprocess 显式编码+cwd；tail 反向截断读取；进度正则唯一出处。
 """
+import html as _html
 import json
+import os
 import re
 import subprocess
 import time
+import urllib.request
 from collections import deque
 from pathlib import Path
 
+try:
+    import tomllib
+except ImportError:
+    tomllib = None
+
 ROOT = Path(__file__).resolve().parent.parent
 VIDEOS = ROOT / "bilive-docker" / "Videos"
+SETTINGS = ROOT / "bilive-docker" / "settings.toml"
 PROMPT_FILE = ROOT / "prompt.txt"
 LOCK = ROOT / "run.lock"
+QUEUE_FILE = ROOT / "panel" / "queue.json"
 PS_STATUS = str(ROOT / "status.ps1")
 PS_PROC = str(ROOT / "process_all.ps1")
 PS_CLEAN = str(ROOT / "cleanup.ps1")
 LOG_DIR = ROOT / "logs" / "pipeline"
+
+_PLACEHOLDER_MARK = "[无语音内容]"
 
 DEFAULT_PROMPT = """你是资深直播内容分析师。以下字幕来自语音识别，可能含同音误听，
 请结合语境自行纠正（游戏术语、DOTA2英雄名、装备名等）。
@@ -109,8 +121,11 @@ def files() -> list:
                 "size_gb": round(m.stat().st_size / 2**30, 2),
                 "mtime": time.strftime("%m-%d %H:%M", time.localtime(m.stat().st_mtime)),
                 "srt": has_srt, "summary": has_sum,
-                "status_label": label, "status_class": cls,
-                "is_current": ((time.time() - m.stat().st_mtime) < 600),
+                "status_label": ("录制中" if (time.time() - m.stat().st_mtime) < 600 else label)
+                                 if not has_sum else label,
+                "status_class": ("b-flv" if (time.time() - m.stat().st_mtime) < 600 and m.suffix==".flv" else cls)
+                                 if not has_sum else cls,
+                "is_current": (time.time() - m.stat().st_mtime) < 600,
             })
     return rows
 
@@ -231,3 +246,191 @@ def set_prompt(text: str) -> tuple[bool, str]:
 def get_prompt_bak() -> str | None:
     bak = PROMPT_FILE.with_suffix(".txt.bak")
     return bak.read_text(encoding="utf-8") if bak.exists() else None
+
+
+# ---------- 任务队列（持久化 + 优先级 + 断电恢复） ----------
+def _load_queue() -> dict:
+    if QUEUE_FILE.exists():
+        try:
+            return json.loads(QUEUE_FILE.read_text(encoding="utf-8"))
+        except Exception:
+            pass
+    return {"jobs": [], "next_id": 1}
+
+
+def _save_queue(q: dict):
+    tmp = QUEUE_FILE.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(q, ensure_ascii=False, indent=1), encoding="utf-8")
+    os.replace(tmp, QUEUE_FILE)
+
+
+def enqueue(name: str, path: str, priority: int = 5) -> dict:
+    """priority: 0=用户点按(插队) 5=批量补位；同文件已有 queued/running 则跳过"""
+    q = _load_queue()
+    for j in q["jobs"]:
+        if j["path"] == path and j["status"] in ("queued", "running"):
+            return {"queued": False, "reason": "已在队列中", "id": j["id"]}
+    job = {"id": f"j{q['next_id']}", "name": name, "path": str(path),
+           "priority": priority, "status": "queued",
+           "created": time.strftime("%H:%M:%S"), "error": None}
+    q["jobs"].append(job)
+    q["next_id"] += 1
+    _save_queue(q)
+    return {"queued": True, "id": job["id"]}
+
+
+def queue_snapshot() -> list:
+    q = _load_queue()
+    order = {"running": 0, "queued": 1, "failed": 2, "done": 3}
+    jobs = sorted(q["jobs"], key=lambda j: (order.get(j["status"], 9), j["priority"],
+                                            -int(j["id"][1:])))
+    return [j for j in jobs if j["status"] != "done" or
+            time.time() - os.path.getmtime(QUEUE_FILE) < 86400][:40] or \
+           sorted(q["jobs"], key=lambda j: -int(j["id"][1:]))[:20]
+
+
+def requeue_stale_running():
+    """面板启动时：把上次中断的 running 重置为 queued（断电恢复）"""
+    q = _load_queue()
+    changed = False
+    for j in q["jobs"]:
+        if j["status"] == "running":
+            j["status"] = "queued"; changed = True
+    if changed:
+        _save_queue(q)
+
+
+def pop_next_job() -> dict | None:
+    q = _load_queue()
+    cand = [j for j in q["jobs"] if j["status"] == "queued"]
+    if not cand:
+        return None
+    job = min(cand, key=lambda j: (j["priority"], int(j["id"][1:])))
+    job["status"] = "running"
+    _save_queue(q)
+    return job
+
+
+def finish_job(job_id: str, ok: bool, error: str | None = None):
+    q = _load_queue()
+    for j in q["jobs"]:
+        if j["id"] == job_id:
+            j["status"] = "done" if ok else "failed"
+            j["error"] = error
+            break
+    # 只保留最近 60 条，防无限膨胀
+    if len(q["jobs"]) > 60:
+        done_ids = {j["id"] for j in q["jobs"] if j["status"] == "done"}
+        keep = [j for j in q["jobs"] if j["status"] != "done"]
+        dones = [j for j in q["jobs"] if j["id"] in done_ids][-30:]
+        q["jobs"] = (keep + dones)[-60:]
+    _save_queue(q)
+
+
+# ---------- 房间（settings.toml 解析 + B站直播状态） ----------
+def rooms_from_settings() -> list[dict]:
+    if not SETTINGS.exists() or tomllib is None:
+        return []
+    try:
+        data = SETTINGS.read_bytes().decode("utf-8-sig")   # 兼容历史 BOM
+        cfg = tomllib.loads(data)
+        return [{"room_id": t.get("room_id"),
+                 "monitor": t.get("enable_monitor", False),
+                 "recorder": t.get("enable_recorder", False)}
+                for t in cfg.get("tasks", [])]
+    except Exception as e:
+        print("[rooms] 解析 settings.toml 失败:", repr(e)[:120], flush=True)
+        return []
+
+
+_live_cache: dict = {"ts": 0.0, "data": {}}
+
+
+def live_status(room_ids: list[int]) -> dict:
+    """B站房间直播状态，60s 缓存。失败容忍→unknown"""
+    now = time.time()
+    ids = [str(r) for r in room_ids]
+    if now - _live_cache["ts"] < 60 and _live_cache["data"]:
+        return {k: v for k, v in _live_cache["data"].items() if k in ids}
+    result = {}
+    for rid in room_ids:
+        entry = {"live_status": None, "title": "", "online": None}
+        try:
+            req = urllib.request.Request(
+                f"https://api.live.bilibili.com/room/v1/Room/get_info?room_id={rid}",
+                headers={"User-Agent": "Mozilla/5.0"})
+            with urllib.request.urlopen(req, timeout=6) as r:
+                d = json.loads(r.read().decode("utf-8", "ignore")).get("data", {})
+            entry.update({"live_status": d.get("live_status"),
+                          "title": d.get("title", ""),
+                          "online": d.get("online")})
+        except Exception:
+            pass
+        result[str(rid)] = entry
+    _live_cache["ts"] = now
+    _live_cache["data"].update(result)
+    return {k: v for k, v in _live_cache["data"].items() if k in ids}
+
+
+def add_room(room_id: int) -> tuple[bool, str]:
+    text = SETTINGS.read_text(encoding="utf-8-sig") if SETTINGS.exists() else ""
+    if f"room_id = {room_id}" in text:
+        return False, "房间已存在"
+    block = (f"\n[[tasks]]\nroom_id = {room_id}\n"
+             "enable_monitor = true\nenable_recorder = true\n")
+    anchor = "\n[output]"
+    if anchor in text:
+        text = text.replace(anchor, block + anchor, 1)
+    else:
+        text += block
+    SETTINGS.write_text(text, encoding="utf-8")
+    return True, "已写入 settings.toml（需重启容器生效）"
+
+
+def remove_room(room_id: int) -> tuple[bool, str]:
+    if not SETTINGS.exists():
+        return False, "settings.toml 不存在"
+    lines = SETTINGS.read_text(encoding="utf-8-sig").splitlines(keepends=True)
+    out, skip, removed = [], False, 0
+    for ln in lines:
+        s = ln.strip()
+        if s.startswith("[[tasks]]"):
+            skip = True; removed_here = False
+            continue
+        if skip:
+            if s.startswith("[") and not s.startswith("[[tasks]]"):
+                skip = False
+            elif s.startswith("room_id") and s.split("=")[1].strip() == str(room_id):
+                removed = 1; continue
+            elif s == "":
+                continue
+            else:
+                continue
+        out.append(ln)
+    if not removed:
+        return False, "未找到该房间"
+    SETTINGS.write_text("".join(out), encoding="utf-8")
+    return True, "已移除（需重启容器生效）"
+
+
+def get_api_key() -> str:
+    """env → 用户注册表兜底（解决计划任务/不同父进程差异）"""
+    k = os.environ.get("OPENROUTER_API_KEY", "").strip()
+    if k:
+        return k
+    try:
+        out = subprocess.run(["reg", "query", r"HKCU\Environment", "/v", "OPENROUTER_API_KEY"],
+                             capture_output=True, text=True, timeout=8).stdout
+        for ln in out.splitlines():
+            if "OPENROUTER_API_KEY" in ln and "REG_SZ" in ln:
+                return ln.split("REG_SZ")[-1].strip()
+    except Exception:
+        pass
+    return ""
+
+
+def is_placeholder_srt(srt_path: Path) -> bool:
+    try:
+        return _PLACEHOLDER_MARK in srt_path.read_text(encoding="utf-8", errors="ignore")
+    except Exception:
+        return False

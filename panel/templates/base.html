@@ -13,6 +13,8 @@
   <nav>
     <a href="/" class="{% if request.url.path == '/' %}active{% endif %}">
       <svg viewBox="0 0 16 16"><rect x="1" y="1" width="6" height="6" rx="1.5"/><rect x="9" y="1" width="6" height="6" rx="1.5"/><rect x="1" y="9" width="6" height="6" rx="1.5"/><rect x="9" y="9" width="6" height="6" rx="1.5"/></svg>仪表盘</a>
+    <a href="/recording" class="{% if request.url.path.startswith('/recording') %}active{% endif %}">
+      <svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="6"/><circle cx="8" cy="8" r="2" fill="#12151c"/></svg>录制</a>
     <a href="/segments" class="{% if request.url.path.startswith('/segments') %}active{% endif %}">
       <svg viewBox="0 0 16 16"><path d="M2 3h12v2H2zM2 7h8v2H2zM2 11h12v2H2z"/></svg>分段库</a>
     <a href="/pipeline" class="{% if request.url.path.startswith('/pipeline') %}active{% endif %}">

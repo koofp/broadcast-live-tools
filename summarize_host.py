@@ -51,6 +51,10 @@ def summarize(srt_path: Path, prompt_tpl: str, key: str) -> bool:
         print(f"[skip] {out.name} 已存在", flush=True)
         return True
     srt = srt_path.read_text(encoding="utf-8")
+    if "[无语音内容]" in srt:
+        out.write_text("（该分段无语音内容，未生成总结）", encoding="utf-8")
+        print("[skip] 占位srt → 写入空总结占位", flush=True)
+        return True
     if len(srt) > MAX_PROMPT_CHARS:
         print(f"[warn] 字幕超长({len(srt)}字符)，截断至{MAX_PROMPT_CHARS}", flush=True)
         srt = srt[:MAX_PROMPT_CHARS] + "\n…(后文截断)"
@@ -76,7 +80,7 @@ def summarize(srt_path: Path, prompt_tpl: str, key: str) -> bool:
             print(f"[retry {attempt+1}/3] {last_err} — {wait}s 后重试", flush=True)
             time.sleep(wait)
     print(f"[FAIL] {srt_path.name}: {last_err}", flush=True)
-    retry_log = srt_path.parent.parent.parent / "retry.txt"
+    retry_log = Path(__file__).resolve().parent / "retry.txt"   # 统一写到根目录
     try:
         with open(retry_log, "a", encoding="utf-8") as f:
             f.write(f"{srt_path}\t{last_err}\n")

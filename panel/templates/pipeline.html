@@ -20,6 +20,14 @@
 <pre class="logbox tall" id="pl-tail">{% for l in pl.tail %}{{ l }}
 {% endfor %}</pre>
 
+<h2>任务队列（Worker 串行执行；点按=插队，批量=补位）</h2>
+<div class="row-actions">
+  <button class="btn primary" id="btn-enqueue-all">＋ 把全部积压加入队列</button>
+  <button class="btn ghost" id="btn-clear-done">清除已完成记录</button>
+  <span class="mut">队列持久化于 panel/queue.json，面板重启自动恢复未完成任务</span>
+</div>
+<table class="tbl"><thead><tr><th>状态</th><th>优先级</th><th>文件</th><th>入队时间</th><th>备注</th></tr></thead><tbody id="qrows"></tbody></table>
+
 <div class="cols">
 <div>
 <h2>失败清单 retry.txt</h2>
@@ -40,6 +48,19 @@
 {% block pagejs %}
 <script>
 App.pageInit.pipeline = async function(){
+  const stTxt={queued:'排队中',running:'运行中',done:'完成',failed:'失败'};
+  const stCls={queued:'b-srt',running:'b-flv',done:'b-done',failed:'b-none'};
+  const paintQ=(jobs)=>{
+    const tb=App.q('#qrows'); if(!tb) return; tb.innerHTML='';
+    if(!jobs.length){tb.innerHTML='<tr><td colspan="5" class="mut center">队列空——可用上方按钮把积压加入队列</td></tr>';return;}
+    for(const j of jobs){
+      const tr=document.createElement('tr');
+      tr.innerHTML=`<td><span class="badge ${stCls[j.status]||'b-none'}">${stTxt[j.status]||j.status}</span></td>
+        <td>${j.priority===0?'★插队':'批量'}</td><td>${j.name}</td><td>${j.created}</td>
+        <td class="mut">${j.error||''}</td>`;
+      tb.appendChild(tr);
+    }
+  };
   const paint = (d) => {
     $('p-lock').textContent = d.locked?'处理中':'空闲';
     $('p-lock').className = d.locked?'v warn':'v ok';
@@ -53,12 +74,19 @@ App.pageInit.pipeline = async function(){
     if(App.q('#auto-scroll').checked && atBottom!==false) tl.scrollTop=tl.scrollHeight;
     App.q('#retry-list').textContent=(d.failures||[]).join('\n')||'(空)';
   };
-  const refresh = async ()=>{ const d=await App.fetchJSON('/api/pipeline'); if(d){paint(d);} };
+  const refresh = async ()=>{ const d=await App.fetchJSON('/api/pipeline'); if(d){paint(d); paintQ(d.jobs||[]);} };
   await refresh();
-  let timer=setInterval(refresh,5000);
+  let timer=setInterval(()=>{if(!document.hidden)refresh();},5000);
   document.addEventListener('visibilitychange',()=>{ // 页面隐藏时暂停轮询
     if(document.hidden){clearInterval(timer);} else {refresh(); timer=setInterval(refresh,5000);}
   });
+  App.q('#btn-enqueue-all').onclick=async()=>{
+    const r=await App.postJSON('/api/jobs/enqueue-all',{});
+    App.toast('已入队 '+((r&&r.enqueued)||0)+' 个');refresh();
+  };
+  App.q('#btn-clear-done').onclick=async()=>{
+    await App.postJSON('/api/jobs/clear-done',{});App.toast('已清除');refresh();
+  };
   App.q('#btn-process-all').onclick=async()=>{
     const r=await App.postJSON('/api/process',{name:'__all__'});
     if(!r.started && r.status===409){App.toast('拒绝: 锁被持有 '+Math.round((r.age_sec||0)/60)+' 分钟');}

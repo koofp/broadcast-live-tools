@@ -1,4 +1,9 @@
 /* bilive 面板设计系统 v2 —— 深色 · 层次化 */
+.grid-cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:14px}
+.roomcard{background:linear-gradient(180deg,var(--card),#151821);border:1px solid var(--line);
+  border-radius:var(--radius);padding:16px 18px;transition:.18s}
+.roomcard:hover{border-color:var(--line2)}
+.roomcard .v.sm{font-size:15px;font-weight:600}
 :root{
   --bg:#0b0d10; --bg2:#12151c; --card:#171a21; --card2:#1d212b;
   --line:#232833; --line2:#2e3543;

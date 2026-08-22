@@ -1,0 +1,73 @@
+{% extends "base.html" %}
+{% block title %}录制{% endblock %}
+{% block page %}recording{% endblock %}
+{% block h1 %}录制 · 房间与直播状态{% endblock %}
+{% block content %}
+<div class="row-actions">
+  <input id="new-room" placeholder="输入房间号（纯数字）" style="width:220px">
+  <button class="btn primary" id="btn-add">＋ 添加房间</button>
+  <button class="btn ghost" id="btn-restart" hidden>↻ 重启容器使其生效</button>
+  <span class="mut" id="room-msg"></span>
+  <span style="margin-left:auto"><a class="btn ghost" href="http://127.0.0.1:22333" target="_blank">blrec 控制台 ↗</a></span>
+</div>
+
+<div id="cards" class="grid-cards"></div>
+<p class="mut">说明：添加/移除房间会修改 settings.toml，需重启容器生效（上方按钮）。直播状态每 60 秒刷新。</p>
+
+<h2>磁盘中存在但未配置录制的房间目录</h2>
+<div id="unconf" class="mut">-</div>
+{% endblock %}
+
+{% block pagejs %}
+<script>
+App.pageInit.recording = async function(){
+  async function load(){
+    const d = await App.fetchJSON('/api/recording'); if(!d) return;
+    const wrap=App.q('#cards'); wrap.innerHTML='';
+    App.q('#unconf').textContent = d.unconfigured
+      ? `有 ${d.unconfirmed_placeholder||d.rooms.filter(r=>!r.configured).length} 个未配置目录（仅存档数据）` : '无';
+    for(const r of d.rooms){
+      const liveTxt = r.live===1?'● 直播中':(r.live===0?'○ 未开播':'? 状态未知');
+      const liveCls = r.live===1?'ok':(r.live===0?'mut':'bad');
+      const cur = r.current?`<div class="hint">🔴 正在录制：${r.current}（${r.current_mb}MB）</div>`:'';
+      const conf = r.configured?'':'<div class="hint bad-hint">未在 settings.toml 中（不会自动录制）</div>';
+      const el=document.createElement('div'); el.className='card roomcard';
+      el.innerHTML=`<div class="k">房间 ${r.room}</div>
+        <div class="v sm"><span class="${liveCls}">${liveTxt}</span> · ${r.online!=null?r.online+'人':''}</div>
+        <div class="hint">${r.title}</div>
+        <div class="hint">分段 ${r.segments} 个 · 共 ${r.total_gb}GB · 最新 ${r.newest_age_min??'-'} 分钟前</div>
+        ${cur}${conf}
+        <div class="row-actions">
+          <a class="btn ghost" href="https://live.bilibili.com/${r.room}" target="_blank">直播间↗</a>
+          ${r.configured?`<button class="btn danger" onclick="removeRoom(${r.room})">移除</button>`
+                        :`<button class="btn" onclick="addRoom(${r.room})">加入录制</button>`}
+        </div>`;
+      wrap.appendChild(el);
+    }
+  }
+  window.addRoom=async rid=>{
+    const r=await App.postJSON('/api/rooms/add',{room_id:rid});
+    App.q('#room-msg').textContent=r.reason;
+    App.q('#btn-restart').hidden=!r.need_restart;
+    load();
+  };
+  window.removeRoom=async rid=>{
+    if(!confirm('确认停止录制并移除房间 '+rid+' ？'))return;
+    const r=await App.postJSON('/api/rooms/remove',{room_id:rid});
+    App.q('#room-msg').textContent=r.reason;
+    App.q('#btn-restart').hidden=!r.need_restart;
+    load();
+  };
+  App.q('#btn-add').onclick=()=>{
+    const v=App.q('#new-room').value.trim();
+    if(!/^\d{5,12}$/.test(v)){App.toast('请输入纯数字房间号');return;}
+    addRoom(v);
+  };
+  App.q('#btn-restart').onclick=async()=>{
+    if(!confirm('重启 bilive 容器使房间变更生效？录制将中断约30秒。'))return;
+    await App.postJSON('/api/docker/restart',{});App.toast('重启指令已下发');
+  };
+  await load(); setInterval(load,60000);
+};
+</script>
+{% endblock %}

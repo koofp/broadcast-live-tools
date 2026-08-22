@@ -1,4 +1,4 @@
-﻿# bilive 批量处理编排：转写 + AI 总结（幂等 + 崩溃安全锁 + 低优先级）
+# bilive 批量处理编排：转写 + AI 总结（幂等 + 崩溃安全锁 + 低优先级）
 # 用法:
 #   process_all.ps1                # 处理所有房间全部待处理分段
 #   process_all.ps1 -One <mp4/flv> # 只处理单个文件（面板用）
@@ -75,6 +75,11 @@ try {
                 ForEach-Object { Log "  $_" }
         }
         if ((Test-Path $srt) -and (Get-Item $srt).Length -gt 0 -and -not (Test-Path $sum)) {
+            if ((Get-Content $srt -Raw -ErrorAction SilentlyContinue) -match '\[无语音内容\]') {
+                Log "[skip] $name 占位srt(无语音)，跳过总结"
+                Set-Content -LiteralPath $sum -Value "（该分段无语音内容，未生成总结）" -Encoding UTF8
+                continue
+            }
             Log "[2/2] 总结 $name"
             python summarize_host.py $srt 2>&1 | ForEach-Object { Log "  $_" }
             if (-not (Test-Path $sum)) { $failList += $srt }

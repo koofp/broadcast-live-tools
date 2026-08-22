@@ -7,7 +7,10 @@
   <div class="card"><div class="k">最新分段</div><div class="v" id="c-newest">{{ st.newest_age_min if st.newest_age_min is not none else '-' }}<small>分钟前</small></div></div>
   <div class="card"><div class="k">磁盘剩余</div><div class="v" id="c-disk">{{ st.free_gb }}<small>GB</small></div></div>
   <div class="card"><div class="k">可录天数</div><div class="v" id="c-days">{{ st.days }}</div></div>
-  <a class="card link" href="/segments"><div class="k">积压待处理</div><div class="v" id="c-backlog">{{ st.backlog }}</div><div class="hint">点击进入分段库 →</div></a>
+ <div class="card"><div class="k">积压待处理</div><div class="v" id="c-backlog">{{ st.backlog }}</div><div class="hint">点击进入分段库 →</div></a>
+ <div class="card wide" style="grid-column:span 2"><div class="k">当前处理</div>
+   <div class="v sm" id="c-active">{{ active_file or '—' }}</div>
+   <div class="hint">{% if progress %}已转写至 {{ progress.audio_time }} · {{ progress.count }} 条{% else %}空闲{% endif %}</div></div>
   <div class="card"><div class="k">DNS 劫持</div><div class="v" id="c-fakeip">{% if 'fakeip' in (st.issues or []) %}被劫持{% elif st.issues and 'dns' in st.issues %}解析失败{% else %}正常{% endif %}</div>
     {% if 'fakeip' in (st.issues or []) %}<div class="hint bad-hint">Clash TUN 运行中 · <a target="_blank" href="/pipeline">处置指引</a></div>{% endif %}</div>
 </div>

@@ -1,7 +1,9 @@
 # -*- coding: utf-8 -*-
-"""bilive 面板主应用 v2：多页面 + JSON API（路由薄层，逻辑在 services）"""
+"""bilive 面板主应用 v3：多页面 + 任务队列 Worker + 房间/录制视图"""
 import html as html_lib
 import os
+import threading
+import time
 from pathlib import Path
 
 import markdown
@@ -19,11 +21,11 @@ app = FastAPI(title="bilive panel", docs_url=None, redoc_url=None)
 templates = Jinja2Templates(directory=str(BASE / "templates"))
 app.mount("/static", StaticFiles(directory=str(BASE / "static")), name="static")
 
-VERSION = "2.0"
+VERSION = "3.0"
+BELOW_NORMAL = 0x00004000
 
 
 def render_md(text: str) -> str:
-    """先转义原始 HTML（防注入），再渲染 Markdown（tables/fenced_code）"""
     safe = html_lib.escape(text)
     return markdown.markdown(safe, extensions=["tables", "fenced_code"])
 
@@ -37,13 +39,109 @@ def _wants_json(request: Request) -> bool:
     return request.url.path.startswith("/api/")
 
 
+# ---------- 任务队列 Worker ----------
+_worker_env = None
+
+
+def _worker_env():
+    global _worker_env
+    if _worker_env is None:
+        e = os.environ.copy()
+        k = services.get_api_key()
+        if k:
+            e["OPENROUTER_API_KEY"] = k
+        _worker_env = e
+    return _worker_env
+
+
+def _run_job(job: dict):
+    v = job["path"]
+    base = Path(v).with_suffix("")
+    srt, sum_md = base.with_suffix(".srt"), base.with_suffix(".summary.md")
+    model = str(Path(__file__).resolve().parent.parent / "models" / "faster-whisper-small")
+
+    if not srt.exists():
+        yield_line = f"[job {job['id']}] 转写 {Path(v).name}"
+        print(yield_line, flush=True)
+        subprocess.run(["python", str(BASE.parent / "transcribe_host.py"), v,
+                        "--model", model], env=_worker_env(),
+                       creationflags=BELOW_NORMAL, cwd=str(services.ROOT))
+    if not srt.exists():
+        services.finish_job(job["id"], False, "转写无产出")
+        return
+    if services.is_placeholder_srt(srt):
+        services.finish_job(job["id"], True, "占位（无语音）跳过总结")
+        return
+    if not sum_md.exists():
+        print(f"[job {job['id']}] 总结 {Path(v).name}", flush=True)
+        subprocess.run(["python", str(BASE.parent / "summarize_host.py"), str(srt),
+                        "--prompt-file", str(Path(services.ROOT) / "prompt.txt")],
+                       env=_worker_env(), creationflags=BELOW_NORMAL,
+                       cwd=str(services.ROOT))
+    services.finish_job(job["id"], sum_md.exists(),
+                        None if sum_md.exists() else "总结无产出")
+
+
+def _worker_loop():
+    services.requeue_stale_running()
+    while True:
+        try:
+            job = services.pop_next_job()
+            if job:
+                _run_job(job)
+            else:
+                time.sleep(3)
+        except Exception as e:
+            print("[worker]", repr(e)[:200], flush=True)
+            time.sleep(5)
+
+
+@app.on_event("startup")
+async def start_worker():
+    threading.Thread(target=_worker_loop, daemon=True).start()
+
+
 # ---------- 页面 ----------
 @app.get("/", response_class=HTMLResponse)
 async def page_dashboard(request: Request):
     st = services.status()
     pl = services.pipeline_state()
+    jobs = services.queue_snapshot()
+    running = next((j for j in jobs if j["status"] == "running"), None)
     return nav(request, "仪表盘", "dashboard.html",
-               st=st, activity=pl["tail"][-6:], failures=pl["failures"])
+               st=st, activity=pl["tail"][-6:], failures=pl["failures"],
+               active_file=(running or {}).get("name"), progress=pl.get("progress"))
+
+
+@app.get("/recording", response_class=HTMLResponse)
+async def page_recording(request: Request):
+    cfg_rooms = {str(r["room_id"]): r for r in services.rooms_from_settings()}
+    live = services.live_status([int(r) for r in cfg_rooms] +
+                               [int(d.name) for d in services.VIDEOS.iterdir()
+                                if d.is_dir() and d.name.isdigit()])
+    cards = []
+    for d in sorted(services.VIDEOS.iterdir(), key=lambda p: p.name):
+        if not (d.is_dir() and d.name.isdigit()):
+            continue
+        rid = d.name
+        lv = live.get(rid, {})
+        segs = sorted(list(d.glob("*.mp4")) + list(d.glob("*.flv")),
+                      key=lambda p: p.stat().st_mtime, reverse=True)
+        cur = segs[0] if segs and (time.time() - segs[0].stat().st_mtime) < 600 else None
+        total_gb = round(sum(p.stat().st_size for p in segs) / 2**30, 2)
+        cards.append({
+            "room": rid, "configured": rid in cfg_rooms,
+            "live": lv.get("live_status"), "title": lv.get("title") or "(标题获取失败)",
+            "online": lv.get("online"),
+            "segments": len(segs), "total_gb": total_gb,
+            "current_name": cur.name if cur else None,
+            "current_mb": round(cur.stat().st_size / 2**20) if cur else None,
+            "newest_age_min": int((time.time() - segs[0].stat().st_mtime) / 60) if segs else None,
+        })
+    unconf = [c for c in cards if not c["configured"]]
+    return nav(request, "录制", "recording.html",
+               cards=cards, unconfigured=len(unconf),
+               container=services.status().get("container"))
 
 
 @app.get("/segments", response_class=HTMLResponse)
@@ -56,7 +154,8 @@ async def page_segments(request: Request):
 @app.get("/pipeline", response_class=HTMLResponse)
 async def page_pipeline(request: Request):
     pl = services.pipeline_state()
-    return nav(request, "流水线", "pipeline.html", pl=pl)
+    jobs = services.queue_snapshot()
+    return nav(request, "流水线", "pipeline.html", pl=pl, jobs=jobs)
 
 
 @app.get("/summaries", response_class=HTMLResponse)
@@ -88,16 +187,117 @@ async def srt_view(request: Request, room: str, name: str):
 
 @app.get("/settings", response_class=HTMLResponse)
 async def page_settings(request: Request):
-    key_set = bool(os.environ.get("OPENROUTER_API_KEY"))
     return nav(request, "设置", "settings.html",
                prompt=services.get_prompt(),
                prompt_bak=services.get_prompt_bak(),
-               key_set=key_set,
+               key_set=bool(services.get_api_key()),
                model_dir=str(Path(services.ROOT) / "models" / "faster-whisper-small"),
                image="bilive-fixed:0.3.1")
 
 
-# ---------- API ----------
+# ---------- API：队列 ----------
+@app.get("/api/jobs")
+async def api_jobs():
+    return services.queue_snapshot()
+
+
+@app.post("/api/jobs/enqueue")
+async def api_jobs_enqueue(req: Request):
+    b = await req.json()
+    name = b.get("name")
+    hit = None
+    for room in services.VIDEOS.iterdir():
+        cand = room / name if name else None
+        if cand and cand.exists():
+            hit = str(cand); break
+    if not hit:
+        return JSONResponse({"queued": False, "reason": "file not found"}, status_code=404)
+    r = services.enqueue(name, hit, priority=0)   # 用户点按=插队
+    return JSONResponse(r, status_code=200 if r["queued"] else 409)
+
+
+@app.post("/api/jobs/enqueue-all")
+async def api_jobs_enqueue_all():
+    n = 0
+    for f in services.files():
+        if f["is_current"] or f["summary"]:
+            continue
+        path = services.VIDEOS / f["room"] / f["name"]
+        r = services.enqueue(f["name"], str(path), priority=5)
+        if r.get("queued"):
+            n += 1
+    return {"enqueued": n}
+
+
+@app.post("/api/jobs/clear-done")
+async def api_jobs_clear_done():
+    q = services._load_queue()
+    q["jobs"] = [j for j in q["jobs"] if j["status"] != "done"]
+    services._save_queue(q)
+    return {"cleared": True}
+
+
+# ---------- API：房间/录制 ----------
+@app.get("/api/recording")
+async def api_recording():
+    return await page_recording_data()
+
+
+async def page_recording_data():
+    cfg_rooms = {str(r["room_id"]): r for r in services.rooms_from_settings()}
+    ids = [int(r) for r in cfg_rooms] + \
+          [int(d.name) for d in services.VIDEOS.iterdir()
+           if d.is_dir() and d.name.isdigit()]
+    live = services.live_status(ids)
+    out = []
+    for d in sorted(services.VIDEOS.iterdir(), key=lambda p: p.name):
+        if not (d.is_dir() and d.name.isdigit()):
+            continue
+        rid = d.name
+        lv = live.get(rid, {})
+        segs = sorted(list(d.glob("*.mp4")) + list(d.glob("*.flv")),
+                      key=lambda p: p.stat().st_mtime, reverse=True)
+        cur = segs[0] if segs and (time.time() - segs[0].stat().st_mtime) < 600 else None
+        out.append({"room": rid, "configured": rid in cfg_rooms,
+                    "live": lv.get("live_status"), "title": lv.get("title") or "",
+                    "online": lv.get("online"), "segments": len(segs),
+                    "total_gb": round(sum(p.stat().st_size for p in segs)/2**30, 2),
+                    "current": (cur.name if cur else None),
+                    "current_mb": (round(cur.stat().st_size/2**20) if cur else None)})
+    return {"rooms": out, "container": services.status().get("container")}
+
+
+@app.post("/api/rooms/add")
+async def api_rooms_add(req: Request):
+    b = await req.json()
+    try:
+        rid = int(b.get("room_id"))
+    except Exception:
+        return JSONResponse({"ok": False, "reason": "房间号必须是数字"}, status_code=400)
+    ok, msg = services.add_room(rid)
+    return JSONResponse({"ok": ok, "reason": msg, "need_restart": ok})
+
+
+@app.post("/api/rooms/remove")
+async def api_rooms_remove(req: Request):
+    b = await req.json()
+    try:
+        rid = int(b.get("room_id"))
+    except Exception:
+        return JSONResponse({"ok": False, "reason": "房间号必须是数字"}, status_code=400)
+    ok, msg = services.remove_room(rid)
+    return JSONResponse({"ok": ok, "reason": msg, "need_restart": ok})
+
+
+@app.post("/api/docker/restart")
+async def api_docker_restart():
+    subprocess.Popen(["docker", "compose", "restart"],
+                     cwd=str(services.VIDEOS.parent), **{
+                         k: v for k, v in services._SUBPROC_KW.items() if k == "cwd"})
+    return {"sent": True}
+
+
+# ---------- API：兼容旧形状 ----------
 @app.get("/api/status")
 async def api_status():
     return services.status()
@@ -110,7 +310,9 @@ async def api_files():
 
 @app.get("/api/pipeline")
 async def api_pipeline():
-    return services.pipeline_state()
+    d = services.pipeline_state()
+    d["jobs"] = services.queue_snapshot()
+    return d
 
 
 @app.get("/api/logs/tail")
@@ -129,17 +331,16 @@ async def api_archive_apply(req: Request):
     b = await req.json()
     if not b.get("confirm"):
         return JSONResponse({"applied": False,
-                             "reason": "需要 confirm=true 的 POST 才会执行删除"}, status_code=400)
+                             "reason": "需要 confirm=true"}, status_code=400)
     out, freed = services.archive(preview_only=False)
     return {"applied": True, "freed_gb": freed, "output": out}
 
 
 @app.post("/api/process")
 async def api_process(req: Request):
+    """兼容旧前端：现在改为入队（高优先级），由 Worker 执行"""
     b = await req.json()
     li = services.lock_info()
-    if li.get("locked"):
-        return JSONResponse({"started": False, "locked": True, **li}, status_code=409)
     one = None
     if b.get("name") and b.get("name") != "__all__":
         hit = None
@@ -150,10 +351,17 @@ async def api_process(req: Request):
         if not hit:
             return JSONResponse({"started": False, "reason": "file not found"}, status_code=404)
         one = hit
-    result = services.trigger(one_path=one)
-    time.sleep(0.3)
-    result.update(services.lock_info())
-    return result
+    if one:
+        r = services.enqueue(Path(one).name, one, priority=0)
+    else:
+        en = await api_jobs_enqueue_all()
+        r = {"queued": True, "count": en.get("enqueued", 0)}
+    if not r.get("queued", True):
+        return JSONResponse({"started": False, "reason": r.get("reason", "已在队列"),
+                             "locked": True, **services.lock_info()}, status_code=200)
+    time.sleep(0.2)
+    return {"started": True, "queued": True, "job": r.get("id"),
+            **services.lock_info()}
 
 
 @app.get("/api/prompt")
@@ -177,7 +385,7 @@ async def api_prompt_rollback():
     bak = services.get_prompt_bak()
     if not bak:
         return JSONResponse({"restored": False, "reason": "无备份版本"}, status_code=404)
-    ok, reason = services.set_prompt(bak)
+    ok, _ = services.set_prompt(bak)
     return {"restored": ok}
 
 
@@ -186,8 +394,8 @@ async def api_summary_md(room: str, name: str):
     s = services.find_summary(room, name)
     if not s:
         return JSONResponse({"error": "not found"}, status_code=404)
-    return {"md": s.read_text(encoding="utf-8"),
-            "html": render_md(s.read_text(encoding="utf-8"))}
+    raw = s.read_text(encoding="utf-8")
+    return {"md": raw, "html": render_md(raw)}
 
 
 @app.get("/srt-api/{room}/{name}")
@@ -198,14 +406,7 @@ async def api_srt(room: str, name: str):
     return {"content": s.read_text(encoding="utf-8", errors="ignore")}
 
 
-@app.post("/api/docker/restart")
-async def api_docker_restart():
-    subprocess.Popen(["docker", "compose", "restart"], cwd=str(services.VIDEOS.parent),
-                     **{k: v for k, v in services._SUBPROC_KW.items() if k in ('cwd',)})
-    return {"sent": True}
-
-
-# ---------- 异常处理：页面与 API 分流 ----------
+# ---------- 异常分流 ----------
 @app.exception_handler(StarletteHTTPException)
 async def http_exc(request: Request, exc: StarletteHTTPException):
     if _wants_json(request):

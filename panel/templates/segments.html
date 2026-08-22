@@ -34,13 +34,15 @@ App.pageInit.segments = async function(){
       if(st==='summary' && !r.summary) continue;
       if(st==='none' && (r.srt||r.summary)) continue;
       if(q && !r.name.toLowerCase().includes(q)) continue;
+      const canProc = !r.summary && !r.is_current;
       const tr=document.createElement('tr');
       tr.innerHTML=`<td>${r.room}</td><td>${r.name}</td><td>${r.size_gb}GB</td><td>${r.mtime}</td>
         <td><span class="badge ${r.status_class}">${r.status_label}</span></td>
         <td class="acts">
           ${r.summary?`<button class="btn ghost" onclick="App.viewSum('${r.room}','${r.name}')">总结</button>
                        <button class="btn ghost" onclick="App.viewSrt('${r.room}','${r.name}')">字幕</button>`:''}
-          ${(!r.summary)?`<button class="btn" onclick="App.procOne('${r.name}')">${r.srt?'补总结':'转写+总结'}</button>`:''}
+          ${canProc?`<button class="btn" onclick="App.procOne('${r.name}')">${r.srt?'补总结':'转写+总结'}</button>`
+                   :(r.is_current?'<span class="mut">录制中…</span>':'')}
         </td>`;
       rows.appendChild(tr);
     }
