@@ -78,6 +78,12 @@ docker run -itd --name bilive_docker --restart unless-stopped \
 - 环境变量注意：用户级 OPENROUTER_API_KEY 对"已存在的父进程树"不生效，新开的计划任务/新终端可见；手动测试时内联 `$env:OPENROUTER_API_KEY=...`。
 - 转写速度实测（small/int8，本机）：30 分钟段 ≈ 11 分钟（2.7x）；孤儿 flv 可直接转写。
 
+## 5.8 面板 v3（任务队列 + 录制页）
+
+- **任务队列**取代"锁拒绝"模式：点击处理=高优先级入队插队；批量积压=低优先级补位；Worker 线程串行执行；queue.json 持久化，面板重启自动恢复未完成任务；流水线页有队列表格与"入队全部/清除已完成"
+- **录制页 /recording**：房间卡（直播状态60s缓存/标题/在线/分段数/总大小/**正在录制实时增长**）+ 添加/移除房间（写 settings.toml + 重启容器二次确认）
+- 修复：retry.txt 统一根目录；占位 srt（无语音）跳过 AI 总结（ps1 与 Worker 双侧）；worker 子进程 key 走注册表兜底；live_status int/str 键型；settings.toml 剥 BOM（PS5.1 Set-Content 引入的 BOM 会让 tomllib 崩——**写 toml 后务必无 BOM**）
+
 ## 5. 扩展资产
 
 ## 5.7 运维自动化套件（2026-08-22 上线，经子代理对抗评审）
