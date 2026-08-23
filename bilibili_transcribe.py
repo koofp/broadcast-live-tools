@@ -89,8 +89,9 @@ def transcribe_local(video: str, srt_path: str, model: str = "small") -> bool:
     if not segs:
         return False
     def ts(sec):
-        h, rem = divmod(int(sec), 3600); m, s = divmod(rem, 60)
-        return "%02d:%02d:%06.3f" % (h, m, s).replace(".", ",")
+        total = float(sec)
+        h = int(total // 3600); m = int(total % 3600 // 60); s = total % 60
+        return ("%02d:%02d:%06.3f" % (h, m, s)).replace(".", ",")   # 修复：原实现截断毫秒且对元组误调 replace 必崩
     lines = []
     for i, seg in enumerate(segs, 1):
         text = seg["text"].strip()

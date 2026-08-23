@@ -4,7 +4,12 @@
 输出: 控制台报告 + 同目录 quality_report.json / .md
 分级: critical(任一即不合格) / warning(提示)
 """
-import re, sys, json, time, time
+import re, sys, json, time
+
+try:  # 防 GBK 管道下 ✅/❌ 输出崩溃
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+except Exception:
+    pass
 from pathlib import Path
 
 BAD_PATTERNS = [
@@ -19,7 +24,7 @@ def ts2ms(t):
 
 def main(srt_path: Path):
     critical, warnings = [], []
-    raw = srt_path.read_text(encoding="utf-8-sig", errors="ignore")
+    raw = srt_path.read_text(encoding="utf-8-sig", errors="replace").replace("\r\n", "\n")   # replace 使 \ufffd 检查生效
 
     # UTF-8 完整性
     if "\ufffd" in raw:

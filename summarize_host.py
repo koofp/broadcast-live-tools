@@ -8,6 +8,11 @@ import json, sys, os, time, argparse
 import urllib.request
 from pathlib import Path
 
+try:  # 防 GBK 管道下非 ASCII 输出崩溃（计划任务/Worker 重定向场景）
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+except Exception:
+    pass
+
 DEFAULT_PROMPT = """你是资深直播内容分析师。以下字幕来自语音识别（whisper small），可能含同音误听，
 请结合语境自行纠正（游戏术语、DOTA2英雄名、装备名等）。
 
@@ -76,17 +81,19 @@ def summarize(srt_path: Path, prompt_tpl: str, key: str) -> bool:
         except urllib.error.HTTPError as e:
             last_err = f"HTTP {e.code}"
             if e.code == 429:
-                wait = 60 * (attempt + 1)   # 限流：60/120/180s
-                print(f"[429 rate-limited] {wait}s 后重试 ({attempt+1}/3)", flush=True)
-                time.sleep(wait)
+                if attempt < 3:                 # 末次失败不再空睡
+                    wait = 60 * (attempt + 1)   # 限流：60/120/180s
+                    print(f"[429 rate-limited] {wait}s 后重试 ({attempt+1}/3)", flush=True)
+                    time.sleep(wait)
             else:
                 print(f"[http {e.code}] 不重试", flush=True)
                 break
         except Exception as e:
             last_err = repr(e)[:200]
-            wait = 5 * (2 ** attempt)
-            print(f"[retry {attempt+1}/3] {last_err} — {wait}s 后重试", flush=True)
-            time.sleep(wait)
+            if attempt < 3:                 # 末次失败不再空睡
+                wait = 5 * (2 ** attempt)
+                print(f"[retry {attempt+1}/3] {last_err} — {wait}s 后重试", flush=True)
+                time.sleep(wait)
     print(f"[FAIL] {srt_path.name}: {last_err}", flush=True)
     retry_log = Path(__file__).resolve().parent / "retry.txt"   # 统一写到根目录
     try:
@@ -97,11 +104,35 @@ def summarize(srt_path: Path, prompt_tpl: str, key: str) -> bool:
     return False
 
 
+def reconcile_retry() -> int:
+    """retry.txt 对账：剔除已产出 summary 的条目并去重（治理历史残留/重复行）。
+    每次调用 summarize_host 时先跑一遍，无论调用方是批处理还是面板 Worker。"""
+    p = Path(__file__).resolve().parent / "retry.txt"
+    if not p.exists():
+        return 0
+    kept = []
+    for ln in p.read_text(encoding="utf-8", errors="ignore").splitlines():
+        srt = ln.split("\t")[0]
+        if srt and Path(srt).with_suffix(".summary.md").exists():
+            continue
+        if ln.strip():
+            kept.append(ln)
+    kept = list(dict.fromkeys(kept))
+    if kept:
+        p.write_text("\n".join(kept) + "\n", encoding="utf-8")
+    else:
+        p.unlink(missing_ok=True)
+    return len(kept)
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("srts", nargs="+")
     ap.add_argument("--prompt-file", default=str(Path(__file__).resolve().parent / "prompt.txt"))
     a = ap.parse_args()
+
+    left = reconcile_retry()
+    print(f"[retry] 对账后剩余 {left} 条待重试", flush=True)
 
     key = os.environ.get("OPENROUTER_API_KEY", "").strip()
     if not key:

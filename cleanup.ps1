@@ -116,5 +116,8 @@ try {
         }
     }
 } finally {
-    if ($lockStream) { $lockStream.Close() }
+    if ($lockStream) {
+        $lockStream.Close()
+        Remove-Item $LockFile -Force -ErrorAction SilentlyContinue   # 与 process_all 的 Unlock 行为对齐
+    }
 }

@@ -10,6 +10,11 @@
 import sys, time, os, argparse
 from pathlib import Path
 
+try:  # 防 GBK 管道下中文进度输出崩溃
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+except Exception:
+    pass
+
 
 def fmt_ts(seconds: float) -> str:
     ms = int(round(seconds * 1000))
@@ -65,7 +70,7 @@ def main():
     a = ap.parse_args()
 
     from faster_whisper import WhisperModel
-    model_arg = a.model if (Path(a.model).exists() or "/" in a.model or "\\" in a.model) else a.model
+    model_arg = a.model
     print(f"[load] faster-whisper: {model_arg} (int8/cpu)", flush=True)
     model = WhisperModel(model_arg, device="cpu", compute_type="int8")
 

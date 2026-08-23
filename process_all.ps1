@@ -7,6 +7,7 @@ param([string]$One = "", [switch]$Force)
 $ErrorActionPreference = 'Continue'
 Set-Location $PSScriptRoot
 $env:PYTHONUTF8 = '1'
+try { [Console]::OutputEncoding = [Text.Encoding]::UTF8 } catch {}   # 防 GBK 控制台吃掉 Python UTF-8 输出（乱码曾破坏面板进度正则）
 try { (Get-Process -Id $PID).PriorityClass = 'BelowNormal' } catch {}
 $Videos = Join-Path $PSScriptRoot 'bilive-docker\Videos'
 $LockFile = Join-Path $PSScriptRoot 'run.lock'
@@ -31,7 +32,8 @@ try {
     if ($Force -or $ageMin -gt 120) { Log "强抢死锁锁(锁龄${ageMin}分钟)"; try { Remove-Item $LockFile -Force } catch {}; $script:lockStream = [IO.File]::Open($LockFile, 'OpenOrCreate', 'ReadWrite', 'None') }
     else { Write-Host "[锁] 其他处理进程运行中(锁龄${ageMin}分钟)，退出。加 -Force 可强抢"; exit 3 }
 }
-$script:lockStream.Write([Text.Encoding]::UTF8.GetBytes("PID=$PID time=$(Get-Date -Format s)"))
+$_lb = [Text.Encoding]::UTF8.GetBytes("PID=$PID time=$(Get-Date -Format s)")
+$script:lockStream.Write($_lb, 0, $_lb.Length)   # 三参写法兼容 WinPS5.1/pwsh7
 $script:lockStream.Flush()
 
 function Unlock { $script:lockStream.Close(); Remove-Item $LockFile -Force -ErrorAction SilentlyContinue }
@@ -65,11 +67,18 @@ try {
     $failList = @()
     foreach ($v in $targets) {
         $name = Split-Path $v -Leaf
+        # 锁心跳：持续刷新 mtime，防止长批次(>2h)被下一轮计划任务误判死锁强抢
+        try {
+            $script:lockStream.SetLength(0)
+            $hb = [Text.Encoding]::UTF8.GetBytes("PID=$PID time=$(Get-Date -Format s)")
+            $script:lockStream.Write($hb, 0, $hb.Length)
+            $script:lockStream.Flush()
+        } catch {}
         $srt = [IO.Path]::ChangeExtension($v, '.srt')
         $sum = [IO.Path]::ChangeExtension($v, '.summary.md')
         if ((Test-Path $sum) -and ((Get-Item $sum).Length -gt 0)) { Log "[skip] $name 全流程已完成"; continue }
 
-        if (-not (Test-Path $srt)) {
+        if (-not (Test-Path $srt) -or (Get-Item $srt).Length -eq 0) {
             Log "[1/2] 转写 $name"
             python transcribe_host.py $v --model (Join-Path $PSScriptRoot 'models\faster-whisper-small') 2>&1 |
                 ForEach-Object { Log "  $_" }
@@ -77,13 +86,27 @@ try {
         if ((Test-Path $srt) -and (Get-Item $srt).Length -gt 0 -and -not (Test-Path $sum)) {
             if ((Get-Content $srt -Raw -ErrorAction SilentlyContinue) -match '\[无语音内容\]') {
                 Log "[skip] $name 占位srt(无语音)，跳过总结"
-                Set-Content -LiteralPath $sum -Value "（该分段无语音内容，未生成总结）" -Encoding UTF8
+                [IO.File]::WriteAllText($sum, "（该分段无语音内容，未生成总结）", (New-Object Text.UTF8Encoding($false)))
                 continue
             }
             Log "[2/2] 总结 $name"
             python summarize_host.py $srt 2>&1 | ForEach-Object { Log "  $_" }
             if (-not (Test-Path $sum)) { $failList += $srt }
         }
+    }
+    # retry.txt 对账：已产出 summary 的条目剔除 + 去重；清零则删除文件
+    $retryFile = Join-Path $PSScriptRoot 'retry.txt'
+    if (Test-Path $retryFile) {
+        $kept = @()
+        Get-Content $retryFile -ErrorAction SilentlyContinue | ForEach-Object {
+            if ($_ -match '^\s*$') { return }
+            $sumPath = [IO.Path]::ChangeExtension(($_ -split "`t")[0], '.summary.md')
+            if (-not (Test-Path $sumPath)) { $kept += $_ }
+        }
+        $kept = @($kept | Select-Object -Unique)
+        if ($kept.Count -gt 0) { Set-Content -LiteralPath $retryFile -Value $kept -Encoding UTF8 }
+        else { Remove-Item $retryFile -Force -ErrorAction SilentlyContinue }
+        Log ("[retry] 对账完成，保留 {0} 条待重试" -f $kept.Count)
     }
     if ($failList) { Log ("失败清单(下轮自动重试): " + ($failList -join '; ')) }
     Log "批量处理结束"

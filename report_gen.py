@@ -9,9 +9,14 @@
 import json, re, sys, time
 from pathlib import Path
 
+try:  # 防 GBK 管道下「→」等字符输出崩溃
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+except Exception:
+    pass
+
 ROOT = Path(__file__).resolve().parent
 VIDEOS = ROOT / "bilive-docker" / "Videos"
-DELETED_LOG = ROOT / "bilive-docker" / "logs" / "pipeline" / "deleted.log"
+DELETED_LOG = ROOT / "logs" / "pipeline" / "deleted.log"   # 修复：原误写 bilive-docker/logs（cleanup 实际写在根 logs）
 
 
 def ts2sec(t):
@@ -21,7 +26,7 @@ def ts2sec(t):
 
 
 def parse_srt(p: Path):
-    raw = p.read_text(encoding="utf-8", errors="ignore")
+    raw = p.read_text(encoding="utf-8-sig", errors="ignore").replace("\r\n", "\n")   # sig 剥 BOM 防坏首块
     if "[无语音内容]" in raw:
         return {"placeholder": True, "count": 0, "first": None, "last": None, "chars": 0}
     blocks = [b for b in raw.split("\n\n") if b.strip()]
@@ -74,7 +79,10 @@ def main(out_file="REPORT.md"):
             summ = stem.with_suffix(".summary.md")
             row = {"room": room.name, "video": vid.name, "archived": vid.name in archived}
             if srt.exists():
-                info = parse_srt(srt)
+                try:
+                    info = parse_srt(srt)
+                except Exception:
+                    info = {"placeholder": False, "count": 0, "first": None, "last": None, "chars": 0}
                 row.update({"语音分钟": round((ts2sec(info["last"])/60) if info["last"] else 0, 1) if not info["placeholder"] else 0,
                             "字幕条数": info["count"],
                             "无语音": info["placeholder"]})
@@ -90,12 +98,13 @@ def main(out_file="REPORT.md"):
              f"> 生成时间 {time.strftime('%Y-%m-%d %H:%M')} · "
              "时长口径=字幕语音区间(≠视频全长) · 「无语音」=VAD 判定无可转写内容 · archived=已归档清理",
              "",
-             "| 房间 | 分段 | 语音分钟 | 字幕条数 | 总结 | 一句话总结 |",
-             "|---|---|---|---|---|---|"]
+             "| 房间 | 分段 | 语音分钟 | 字幕条数 | 无语音 | 总结 | 一句话总结 |",
+             "|---|---|---|---|---|---|---|"]
     for r in rows:
         tag = " *(archived)*" if r["archived"] else ""
+        nov = '是' if r.get('无语音') else '-'
         lines.append(f"| {r['room']}{tag} | {r['video']} | {r.get('语音分钟','n/a')} | "
-                     f"{r.get('字幕条数','n/a')} | {r.get('总结','-')} | {(r.get('一句话') or '')[:50]} |")
+                     f"{r.get('字幕条数','n/a')} | {nov} | {r.get('总结','-')} | {(r.get('一句话') or '')[:50]} |")
 
     done = sum(1 for r in rows if r["总结"] == "有")
     out = ROOT / out_file
