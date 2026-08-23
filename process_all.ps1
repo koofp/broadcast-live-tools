@@ -32,9 +32,11 @@ try {
     if ($Force -or $ageMin -gt 120) { Log "强抢死锁锁(锁龄${ageMin}分钟)"; try { Remove-Item $LockFile -Force } catch {}; $script:lockStream = [IO.File]::Open($LockFile, 'OpenOrCreate', 'ReadWrite', 'None') }
     else { Write-Host "[锁] 其他处理进程运行中(锁龄${ageMin}分钟)，退出。加 -Force 可强抢"; exit 3 }
 }
-$_lb = [Text.Encoding]::UTF8.GetBytes("PID=$PID time=$(Get-Date -Format s)")
-$script:lockStream.Write($_lb, 0, $_lb.Length)   # 三参写法兼容 WinPS5.1/pwsh7
-$script:lockStream.Flush()
+try {
+    $_lb = [Text.Encoding]::UTF8.GetBytes("PID=$PID time=$(Get-Date -Format s)")
+    $script:lockStream.Write($_lb, 0, $_lb.Length)   # 三参写法兼容 WinPS5.1/pwsh7
+    $script:lockStream.Flush()
+} catch { Write-Host "[warn] 锁戳写入失败(不影响锁持有): $_" }
 
 function Unlock { $script:lockStream.Close(); Remove-Item $LockFile -Force -ErrorAction SilentlyContinue }
 
@@ -82,6 +84,7 @@ try {
             Log "[1/2] 转写 $name"
             python transcribe_host.py $v --model (Join-Path $PSScriptRoot 'models\faster-whisper-small') 2>&1 |
                 ForEach-Object { Log "  $_" }
+            if ($LASTEXITCODE -ne 0) { Log "[warn] transcribe_host exit=$LASTEXITCODE ($name)" }
         }
         if ((Test-Path $srt) -and (Get-Item $srt).Length -gt 0 -and -not (Test-Path $sum)) {
             if ((Get-Content $srt -Raw -ErrorAction SilentlyContinue) -match '\[无语音内容\]') {
@@ -91,6 +94,7 @@ try {
             }
             Log "[2/2] 总结 $name"
             python summarize_host.py $srt 2>&1 | ForEach-Object { Log "  $_" }
+            if ($LASTEXITCODE -ne 0) { Log "[warn] summarize_host exit=$LASTEXITCODE ($name)" }
             if (-not (Test-Path $sum)) { $failList += $srt }
         }
     }

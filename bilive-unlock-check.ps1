@@ -7,7 +7,7 @@
 param(
     [string]$RoomId = "1832485943",
     [string]$Cookie = "",
-    [string]$DockerDir = "D:\CodeIDE\01-Code_item\01-Ai-item\ai-brower-tool\broadcast-live-tools\bilive-docker"
+    [string]$DockerDir = (Join-Path $PSScriptRoot 'bilive-docker')   # 修复：原硬编码绝对路径
 )
 
 $ErrorActionPreference = "Stop"

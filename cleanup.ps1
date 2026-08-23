@@ -41,8 +41,13 @@ if (-not $got) {
         -Value "$(Get-Date -Format s)`t$msg" -Encoding UTF8
     exit 3
 }
+# 锁戳（评审[高]：原 cleanup 拿锁后不写内容，长跑>2h 会被 process_all 误判死锁强抢→双进程）
+$lb = [Text.Encoding]::UTF8.GetBytes("PID=$PID time=$(Get-Date -Format s) role=cleanup")
+$lockStream.Write($lb, 0, $lb.Length)
+$lockStream.Flush()
 
 try {
+    $ErrorActionPreference = 'Stop'   # 主流程收紧
     $freeGB = [math]::Round((Get-PSDrive D).Free/1GB, 1)
     Write-Host "D 盘剩余 ${freeGB}GB（阈值150 → 删至200）"
     if ($freeGB -ge 150) { Write-Host '磁盘充足，无需清理。'; exit 0 }
@@ -65,12 +70,17 @@ try {
         Get-ChildItem $_.FullName -Filter *.mp4 -File -ErrorAction SilentlyContinue | ForEach-Object {
             $base = $_.FullName.Substring(0, $_.FullName.Length - 4)
             $srt = "$base.srt"; $sum = "$base.summary.md"
+            # v3(辩论定案)：占位段(无语音)写入 summary 后即视为已处理，放行清理，
+            # 否则其 mp4 永久滞留=无人值守下的磁盘静默泄漏。
+            # 护栏：真实段仍要求 srt>1KB；所有候选 mp4>=1MB 防损坏文件误入；
+            #       仍保留超48h+垃圾桶7天回滚+keep白名单保护。
+            $srtOk = (Test-Path $srt) -and ((Get-Item $srt).Length -gt 1KB)
             $isPlaceholder = $false
             if (Test-Path $srt) {
                 $isPlaceholder = ((Get-Content $srt -Raw -ErrorAction SilentlyContinue) -match '\[无语音内容\]')
             }
-            $cond = (Test-Path $srt) -and ((Get-Item $srt).Length -gt 1KB) -and (-not $isPlaceholder) -and `
-                    (Test-Path $sum) -and `
+            $processed = (Test-Path $sum) -and ($srtOk -or $isPlaceholder)
+            $cond = $processed -and ($_.Length -ge 1MB) -and `
                     ((Get-Date) - $_.LastWriteTime).TotalHours -gt 48 -and `
                     ((Get-Date) - $_.LastWriteTime).TotalMinutes -gt 15
             if ($cond) { $candidates += $_ }

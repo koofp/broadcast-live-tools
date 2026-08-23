@@ -14,6 +14,7 @@
 | 改提示词/回滚/系统信息 | 面板 → 设置 |
 | 手动处理一批分段 | `process_all.ps1`（或面板流水线页"入队全部"）|
 | 检查磁盘/监控 | `status.ps1`（或面板仪表盘）|
+| 改码后回归验证 | `.\verify.ps1`（30秒：py编译/ps解析/BOM/冒烟）|
 | 清理旧分段 | 面板流水线页"归档预览"→"Apply"（或计划任务每日自动）|
 | 生成全量复盘报告 | `python report_gen.py` → REPORT.md |
 | 质量抽检某段 | `python qa_check.py <srt路径>` |
@@ -117,6 +118,40 @@ docker run -itd --name bilive_docker --restart unless-stopped \
 - **页面跳转慢根因**：全部路由 `async def` 却在事件循环里跑阻塞子进程（status.ps1 全量 5~10s、ffprobe 容器 exec、B站 API 串行 6s×N），一个慢请求拖死所有页面；录制页还为拿一个容器字符串跑全量 status.ps1。修复：路由改同步 `def`（线程池）、status() 加 20s TTL 缓存、新增轻量 `container_status()`、live_status 并发拉取。实测页面冷/热均 **28~41ms**。
 - **bilive-panel Result=1 根治**：任务动作 pythonw 直启 panel.py 且 WorkDir 为空；端口被占时 uvicorn 以退出码 1 失败（开机自启假故障）。修复：panel.py 先探测 9090，已有实例则 exit(0)；`Set-ScheduledTask` 补 WorkDir。验证 Start-ScheduledTask 拉起成功。
 - **潜伏 bug**：pipeline_state 对 durations_get 按元组解包（实为 float），管线转写期间打开仪表盘必 500。已修。
+
+## 5.96 全量代码审查与回归基建（2026-08-24 凌晨）
+
+三路子代理评审（面板/运维脚本/宿主Python）+ 三视角辩论（SRE/数据完整性/极简主义）定案执行。
+
+**修复的高危**
+- panel Worker `_worker_env` 函数与模块变量同名 → env=收到函数对象，队列任务全瘫痪
+- api_docker_restart kwargs 重复传 cwd → 重启容器按钮必 500
+- cleanup 拿锁后从不写锁戳 → 长跑>2h 被 process_all 误判死锁强抢成双进程（已补 PID 戳）
+- report_gen deleted.log 路径错（bilive-docker/logs→logs），archived 合并一直是死代码
+- bilibili_transcribe ts() 对元组误调 replace 必崩 + 毫秒全丢
+- Worker 子进程无超时（现转写1h/总结30min兜底）；pop_next_job 在拷贝上置状态致落盘仍 queued；
+  acquire_run_lock 前置探测的 TOCTOU 窗口
+
+**机制改进**
+- retry.txt 双侧对账（process_all 末轮 + summarize_host 每次调用前）：剔除已成功条目+去重+清零删文件
+- 锁心跳：process_all 每个文件处理前刷新锁 mtime，防长批次(>2h)被下一轮强抢
+- 编码链统一 UTF8：process_all [Console]::OutputEncoding + 四个 py stdout.reconfigure
+  （此前 GBK 日志乱码破坏面板进度正则 `(N条)`）
+- cleanup v3：占位段(无语音)写入 summary 后即放行清理（护栏 mp4≥1MB），消除磁盘静默泄漏
+- 红牌留痕：fake-ip+停摆同时出现时写 logs/pipeline/alert.log（无人看仪表盘也有据可查）
+- 前端加固：App.esc 转义动态拼入 innerHTML 的外部数据；viewSum 改用服务端转义 HTML；
+  settings 页 `$('save-state')` 死引用修复
+
+**新基建**
+- `verify.ps1` 一键回归：py编译/ps解析/ps1 BOM 存在性/关键产物/settings.toml 可解析/面板冒烟。
+  **任何代码改动后必跑**（30 秒）。
+- prompt.txt 物化入库（此前缺失时静默用内置默认值，不可见）
+- 删除废弃脚本 bilive_pipeline.ps1（旧容器内 whisper 方案，零引用）
+
+**新坑记录**
+- ⚠️ 编辑工具重写 ps1 会剥掉 UTF-8 BOM → WinPS 中文乱码解析失败（今日踩两次；verify.ps1 已设 BOM 防线）
+- FileStream.Write(byte[]) 单参重载在 pwsh7/.NET Core 不存在——跨 WinPS5.1/pwsh7 一律三参 Write(b,0,len)
+- Task Scheduler 等待类检查脚本注意日期比较基准（'00:07' 会解析成今天凌晨而非明天）
 
 ## 5. 扩展资产
 
