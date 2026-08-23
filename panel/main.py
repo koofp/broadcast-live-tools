@@ -14,6 +14,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+from starlette.concurrency import run_in_threadpool
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from . import services
@@ -137,7 +138,7 @@ async def start_worker():
 
 # ---------- 页面 ----------
 @app.get("/", response_class=HTMLResponse)
-async def page_dashboard(request: Request):
+def page_dashboard(request: Request):
     st = services.status()
     pl = services.pipeline_state()
     jobs = services.queue_snapshot()
@@ -157,7 +158,23 @@ async def page_dashboard(request: Request):
 
 
 @app.get("/recording", response_class=HTMLResponse)
-async def page_recording(request: Request):
+def page_recording(request: Request):
+    payload = _recording_payload()
+    return nav(request, "录制", "recording.html",
+               cards=payload["rooms"], unconf_count=payload["unconf_count"],
+               container=payload["container"])
+
+
+def _recording_payload() -> dict:
+    """录制页与 /api/recording 共用的数据装配（同步函数，路由层自动进线程池）。
+
+    「正在录制」判定 v2（2026-08-23）：以 B 站直播状态为主、文件新鲜度为辅。
+    旧逻辑仅看「最新视频 mtime < 600s」，有两个实锤误报源：
+      ① blrec 的 postprocessing 会在分段结束后 remux 出新 mp4（新 mtime、
+         写入中途只有几 MB）——把旧分段误报成"正在录制"
+         （实测卡片显示过 15-23-59.mp4/10MB，即此因）；
+      ② 主播已下播（live_status=0）时红灯仍可亮最长 10 分钟。
+    """
     cfg_rooms = {str(r["room_id"]): r for r in services.rooms_from_settings()}
     disk_rooms = [d.name for d in services.VIDEOS.iterdir()
                   if d.is_dir() and d.name.isdigit()]
@@ -169,45 +186,53 @@ async def page_recording(request: Request):
         lv = live.get(rid, {})
         segs = sorted(list(d.glob("*.mp4")) + list(d.glob("*.flv")),
                       key=lambda p: p.stat().st_mtime, reverse=True) if d.exists() else []
-        cur = segs[0] if segs and (time.time() - segs[0].stat().st_mtime) < 600 else None
+        newest_age_min = int((time.time() - segs[0].stat().st_mtime) / 60) if segs else None
+        lstat = lv.get("live_status")
+        cur = None
+        if segs:
+            if lstat == 1:
+                cur = segs[0] if newest_age_min <= 15 else None   # 直播中：最新段即当前录制
+            elif lstat == 0:
+                cur = None                                        # 未开播 → 绝不亮红灯
+            elif newest_age_min is not None and newest_age_min < 10:
+                cur = segs[0]                                     # 状态未知 → 沿用旧启发式
         total_gb = round(sum(p.stat().st_size for p in segs) / 2**30, 2)
         cards.append({
             "room": rid, "configured": rid in cfg_rooms,
-            "live": lv.get("live_status"), "title": lv.get("title") or "(标题获取失败)",
+            "live": lstat, "title": lv.get("title") or "(标题获取失败)",
             "online": lv.get("online"),
             "segments": len(segs), "total_gb": total_gb,
-            "current_name": cur.name if cur else None,
+            "current": cur.name if cur else None,
             "current_mb": round(cur.stat().st_size / 2**20) if cur else None,
-            "newest_age_min": int((time.time() - segs[0].stat().st_mtime) / 60) if segs else None,
+            "newest_age_min": newest_age_min,
         })
     unconf = len([c for c in cards if not c["configured"]])
-    return nav(request, "录制", "recording.html",
-               cards=cards, unconf_count=unconf,
-               container=services.status().get("container"))
+    return {"rooms": cards, "unconf_count": unconf,
+            "container": services.container_status()}
 
 
 @app.get("/segments", response_class=HTMLResponse)
-async def page_segments(request: Request):
+def page_segments(request: Request):
     files = services.files()
     rooms = sorted({f["room"] for f in files})
     return nav(request, "分段库", "segments.html", files=files, rooms=rooms)
 
 
 @app.get("/pipeline", response_class=HTMLResponse)
-async def page_pipeline(request: Request):
+def page_pipeline(request: Request):
     pl = services.pipeline_state()
     jobs = services.queue_snapshot()
     return nav(request, "流水线", "pipeline.html", pl=pl, jobs=jobs)
 
 
 @app.get("/summaries", response_class=HTMLResponse)
-async def page_summaries(request: Request, q: str = ""):
+def page_summaries(request: Request, q: str = ""):
     rows = services.summaries_list(query=q)
     return nav(request, "总结库", "summaries.html", rows=rows, q=q)
 
 
 @app.get("/summaries/{room}/{name}", response_class=HTMLResponse)
-async def summary_read(request: Request, room: str, name: str):
+def summary_read(request: Request, room: str, name: str):
     s = services.find_summary(room, name)
     if not s:
         return RedirectResponse("/summaries")
@@ -217,7 +242,7 @@ async def summary_read(request: Request, room: str, name: str):
 
 
 @app.get("/srt/{room}/{name}", response_class=HTMLResponse)
-async def srt_view(request: Request, room: str, name: str):
+def srt_view(request: Request, room: str, name: str):
     s = services.find_srt(room, name)
     if not s:
         return RedirectResponse("/segments")
@@ -228,7 +253,7 @@ async def srt_view(request: Request, room: str, name: str):
 
 
 @app.get("/settings", response_class=HTMLResponse)
-async def page_settings(request: Request):
+def page_settings(request: Request):
     return nav(request, "设置", "settings.html",
                prompt=services.get_prompt(),
                prompt_bak=services.get_prompt_bak(),
@@ -281,32 +306,8 @@ async def api_jobs_clear_done():
 
 # ---------- API：房间/录制 ----------
 @app.get("/api/recording")
-async def api_recording():
-    return await page_recording_data()
-
-
-async def page_recording_data():
-    cfg_rooms = {str(r["room_id"]): r for r in services.rooms_from_settings()}
-    ids = [int(r) for r in cfg_rooms] + \
-          [int(d.name) for d in services.VIDEOS.iterdir()
-           if d.is_dir() and d.name.isdigit()]
-    live = services.live_status(ids)
-    out = []
-    for d in sorted(services.VIDEOS.iterdir(), key=lambda p: p.name):
-        if not (d.is_dir() and d.name.isdigit()):
-            continue
-        rid = d.name
-        lv = live.get(rid, {})
-        segs = sorted(list(d.glob("*.mp4")) + list(d.glob("*.flv")),
-                      key=lambda p: p.stat().st_mtime, reverse=True)
-        cur = segs[0] if segs and (time.time() - segs[0].stat().st_mtime) < 600 else None
-        out.append({"room": rid, "configured": rid in cfg_rooms,
-                    "live": lv.get("live_status"), "title": lv.get("title") or "",
-                    "online": lv.get("online"), "segments": len(segs),
-                    "total_gb": round(sum(p.stat().st_size for p in segs)/2**30, 2),
-                    "current": (cur.name if cur else None),
-                    "current_mb": (round(cur.stat().st_size/2**20) if cur else None)})
-    return {"rooms": out, "container": services.status().get("container")}
+def api_recording():
+    return _recording_payload()
 
 
 @app.post("/api/rooms/add")
@@ -316,12 +317,12 @@ async def api_rooms_add(req: Request):
         rid = int(b.get("room_id"))
     except Exception:
         return JSONResponse({"ok": False, "reason": "房间号必须是数字"}, status_code=400)
-    v = services.validate_room(rid)
+    v = await run_in_threadpool(services.validate_room, rid)
     if not v.get("valid"):
         return JSONResponse({"ok": False,
                              "reason": f"房间不存在或无法访问（{v.get('reason','校验失败')}）"},
                             status_code=400)
-    ok, msg = services.add_room(rid)
+    ok, msg = await run_in_threadpool(services.add_room, rid)
     return JSONResponse({"ok": ok, "reason": f"{msg} · {v.get('title','')}",
                          "need_restart": ok})
 
@@ -333,7 +334,7 @@ async def api_rooms_remove(req: Request):
         rid = int(b.get("room_id"))
     except Exception:
         return JSONResponse({"ok": False, "reason": "房间号必须是数字"}, status_code=400)
-    ok, msg = services.remove_room(rid)
+    ok, msg = await run_in_threadpool(services.remove_room, rid)
     return JSONResponse({"ok": ok, "reason": msg, "need_restart": ok})
 
 
@@ -347,29 +348,29 @@ async def api_docker_restart():
 
 # ---------- API：兼容旧形状 ----------
 @app.get("/api/status")
-async def api_status():
+def api_status():
     return services.status()
 
 
 @app.get("/api/files")
-async def api_files():
+def api_files():
     return services.files()
 
 
 @app.get("/api/pipeline")
-async def api_pipeline():
+def api_pipeline():
     d = services.pipeline_state()
     d["jobs"] = services.queue_snapshot()
     return d
 
 
 @app.get("/api/logs/tail")
-async def api_logs_tail(n: int = 40):
+def api_logs_tail(n: int = 40):
     return {"lines": services.tail_log(n)}
 
 
 @app.get("/api/archive/preview")
-async def api_archive_preview():
+def api_archive_preview():
     out, freed = services.archive(preview_only=True)
     return {"output": out}
 
@@ -380,7 +381,7 @@ async def api_archive_apply(req: Request):
     if not b.get("confirm"):
         return JSONResponse({"applied": False,
                              "reason": "需要 confirm=true"}, status_code=400)
-    out, freed = services.archive(preview_only=False)
+    out, freed = await run_in_threadpool(services.archive, preview_only=False)
     return {"applied": True, "freed_gb": freed, "output": out}
 
 
@@ -438,7 +439,7 @@ async def api_prompt_rollback():
 
 
 @app.get("/api/summary")
-async def api_summary_md(room: str, name: str):
+def api_summary_md(room: str, name: str):
     s = services.find_summary(room, name)
     if not s:
         return JSONResponse({"error": "not found"}, status_code=404)
@@ -447,7 +448,7 @@ async def api_summary_md(room: str, name: str):
 
 
 @app.get("/srt-api/{room}/{name}")
-async def api_srt(room: str, name: str):
+def api_srt(room: str, name: str):
     s = services.find_srt(room, name)
     if not s:
         return JSONResponse({"error": "not found"}, status_code=404)

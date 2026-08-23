@@ -17,7 +17,7 @@
 | 清理旧分段 | 面板流水线页"归档预览"→"Apply"（或计划任务每日自动）|
 | 生成全量复盘报告 | `python report_gen.py` → REPORT.md |
 | 质量抽检某段 | `python qa_check.py <srt路径>` |
-| 开/关面板 | `python panel.py`（计划任务已配置开机自启）|
+| 开面板 | 双击桌面「启动面板」（即项目根目录 `启动面板.cmd`）；2026-08-23 起改为手动启动，自启任务已禁用 |
 
 ---
 
@@ -109,6 +109,14 @@ docker run -itd --name bilive_docker --restart unless-stopped \
 - **锁自愈实测**：伪造 run.lock → 面板独占探测自动清除 ✓
 - **统计口径修正**：积压=无srt 或 有srt无summary（10 分钟内活跃分段不计）；ChangeExtension 尾点坑已绕开（Substring 截断）
 - 已知显示坑：PowerShell 表格对 <50KB 文件 MB 舍入显示 0——判断文件是否为空用精确字节数
+
+## 5.95 面板 v3.2 修复实录（2026-08-23 深夜）
+
+- **settings.toml CRCRLF 损坏（重大）**：`remove_room` 用 `read_bytes()+write_text()` 组合，Windows 换行二次翻译把全文件写成 `\r\r\n` → tomllib 崩（面板日志刷屏 TOMLDecodeError）、**容器重启后 blrec 也会崩**。已修复字节（备份 `settings.toml.bak-20260823-crlfcrlf`）；代码侧三重防护：写入统一走 `_write_settings()`（LF 落盘）、解析前归一化换行、读用 universal newlines。教训升级：**写 toml 必须 write_bytes+LF，读写两端都要防换行翻译**。
+- **「正在录制」判定 v2**：旧逻辑只看"最新视频 mtime<600s"，被 blrec 后处理 remux 误触（分段结束后新写 mp4、中途仅几 MB → 卡片显示过 `15-23-59.mp4/10MB` 假红灯），且下播后红灯可残留 10 分钟。现以 B 站 live_status 为主：直播中+最新段≤15min 才亮灯；未开播绝不亮；状态未知沿用旧启发式。API 补齐 `newest_age_min` 字段（修"最新 - 分钟前"）。
+- **页面跳转慢根因**：全部路由 `async def` 却在事件循环里跑阻塞子进程（status.ps1 全量 5~10s、ffprobe 容器 exec、B站 API 串行 6s×N），一个慢请求拖死所有页面；录制页还为拿一个容器字符串跑全量 status.ps1。修复：路由改同步 `def`（线程池）、status() 加 20s TTL 缓存、新增轻量 `container_status()`、live_status 并发拉取。实测页面冷/热均 **28~41ms**。
+- **bilive-panel Result=1 根治**：任务动作 pythonw 直启 panel.py 且 WorkDir 为空；端口被占时 uvicorn 以退出码 1 失败（开机自启假故障）。修复：panel.py 先探测 9090，已有实例则 exit(0)；`Set-ScheduledTask` 补 WorkDir。验证 Start-ScheduledTask 拉起成功。
+- **潜伏 bug**：pipeline_state 对 durations_get 按元组解包（实为 float），管线转写期间打开仪表盘必 500。已修。
 
 ## 5. 扩展资产
 
@@ -220,7 +228,7 @@ broadcast-live-tools/
 |---|---|---|
 | bilive-pipeline | 每 30 分钟 | 批量转写+总结兜底 |
 | bilive-cleanup | 每 2 小时 | 磁盘 <150GB 时归档清理（含 keep 白名单/垃圾桶/锁重试）|
-| bilive-panel | 开机登录 | 面板自启 |
+| bilive-panel | **已禁用**（用户选择手动启动 2026-08-23）| 看板需要时双击桌面「启动面板」；录制/管线/清理不受影响；恢复自启：`Enable-ScheduledTask -TaskName bilive-panel` |
 
 ## 12. 新对话启动提示（上下文切换）
 

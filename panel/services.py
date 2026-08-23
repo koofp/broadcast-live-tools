@@ -11,6 +11,7 @@ import threading
 import time
 import urllib.request
 from collections import deque
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 try:
@@ -82,25 +83,53 @@ def lock_info() -> dict:
                 "force_available": age > 7200}
 
 
-def status() -> dict:
-    out = _ps(PS_STATUS, timeout=180)
-    js = None
-    for line in reversed(out.splitlines()):
-        line = line.strip()
-        if line.startswith("{"):
-            try:
-                js = json.loads(line)
-                break
-            except Exception:
-                continue
-    d = dict(js or {})
-    ctn = subprocess.run(["docker", "ps", "--filter", "name=bilive_docker",
-                          "--format", "{{.Status}}"],
-                         **{k: v for k, v in _SUBPROC_KW.items() if k != 'cwd'}).stdout.strip()
-    d["container"] = ctn or "stopped"
-    d.update(lock_info())
-    d["ts"] = time.strftime("%H:%M:%S")
-    return d
+_ctn_cache: dict = {"ts": 0.0, "val": ""}
+_status_cache: dict = {"ts": 0.0, "data": None}
+_STATUS_LOCK = threading.Lock()
+
+
+def container_status(max_age: float = 10.0) -> str:
+    """轻量容器状态：单次 docker ps + 缓存。
+    替代"只为拿一个容器状态字符串就跑全量 status.ps1（5~10 秒）"的旧做法。"""
+    now = time.time()
+    if now - _ctn_cache["ts"] > max_age:
+        try:
+            _ctn_cache["val"] = subprocess.run(
+                ["docker", "ps", "--filter", "name=bilive_docker",
+                 "--format", "{{.Status}}"],
+                **{k: v for k, v in _SUBPROC_KW.items() if k != 'cwd'},
+                timeout=15).stdout.strip()
+        except Exception:
+            _ctn_cache["val"] = ""
+        _ctn_cache["ts"] = now
+    return _ctn_cache["val"] or "stopped"
+
+
+def status(max_age: float = 20.0) -> dict:
+    """全量红黄绿状态（跑 status.ps1）。带 TTL 缓存——此前每次页面/轮询都冷启动
+    一个 PowerShell 进程跑 5~10 秒，且在 async 路由里直接阻塞事件循环，
+    是面板页面跳转缓慢的最大单一来源。"""
+    with _STATUS_LOCK:
+        now = time.time()
+        if _status_cache["data"] is not None and now - _status_cache["ts"] < max_age:
+            return dict(_status_cache["data"])
+        out = _ps(PS_STATUS, timeout=180)
+        js = None
+        for line in reversed(out.splitlines()):
+            line = line.strip()
+            if line.startswith("{"):
+                try:
+                    js = json.loads(line)
+                    break
+                except Exception:
+                    continue
+        d = dict(js or {})
+        d["container"] = container_status(max_age=0)
+        d.update(lock_info())
+        d["ts"] = time.strftime("%H:%M:%S")
+        _status_cache["ts"] = now
+        _status_cache["data"] = dict(d)
+        return d
 
 
 def _room_dirs():
@@ -175,7 +204,7 @@ def pipeline_state() -> dict:
     if retry.exists():
         fails = [l for l in retry.read_text(encoding="utf-8", errors="ignore").splitlines()
                  if l.strip()][-10:]
-    duration, pct = durations_get(active) if active else (None, None)
+    duration = durations_get(active) if active else None   # 修复：原按元组解包，实为 float
     pct_val = None
     if duration and progress and progress.get("audio_time"):
         mm = re.match(r"(\d{2}):(\d{2}):(\d{2})", progress["audio_time"])
@@ -425,6 +454,7 @@ def rooms_from_settings() -> list[dict]:
         return []
     try:
         data = SETTINGS.read_bytes().decode("utf-8-sig")   # 兼容历史 BOM
+        data = data.replace("\r\n", "\n").replace("\r", "\n")  # 容错历史 \r\r\n 损坏
         cfg = tomllib.loads(data)
         return [{"room_id": t.get("room_id"),
                  "monitor": t.get("enable_monitor", False),
@@ -444,8 +474,7 @@ def live_status(room_ids: list[int]) -> dict:
     ids = [str(r) for r in room_ids]
     if now - _live_cache["ts"] < 60 and _live_cache["data"]:
         return {k: v for k, v in _live_cache["data"].items() if k in ids}
-    result = {}
-    for rid in room_ids:
+    def _fetch(rid: int) -> dict:
         entry = {"live_status": None, "title": "", "online": None}
         try:
             req = urllib.request.Request(
@@ -458,10 +487,23 @@ def live_status(room_ids: list[int]) -> dict:
                           "online": d.get("online")})
         except Exception:
             pass
-        result[str(rid)] = entry
+        return entry
+
+    result = {}
+    with ThreadPoolExecutor(max_workers=min(8, max(1, len(room_ids)))) as ex:
+        for rid, entry in zip(room_ids, ex.map(_fetch, room_ids)):
+            result[str(rid)] = entry
     _live_cache["ts"] = now
     _live_cache["data"].update(result)
     return {k: v for k, v in _live_cache["data"].items() if k in ids}
+
+
+def _write_settings(text: str):
+    """统一 LF 落盘，杜绝 Windows 换行二次翻译产生 \r\r\n。
+    （2026-08-23 实锤：remove_room 用 read_bytes+write_text 组合把整个文件写成
+    CRCRLF，tomllib 与容器内 blrec 解析双双崩溃。）"""
+    data = text.replace("\r\n", "\n").replace("\r", "\n")
+    SETTINGS.write_bytes(data.encode("utf-8"))
 
 
 def add_room(room_id: int) -> tuple[bool, str]:
@@ -475,7 +517,7 @@ def add_room(room_id: int) -> tuple[bool, str]:
         text = text.replace(anchor, block + anchor, 1)
     else:
         text += block
-    SETTINGS.write_text(text, encoding="utf-8")
+    _write_settings(text)
     return True, "已写入 settings.toml（需重启容器生效）"
 
 
@@ -483,7 +525,7 @@ def remove_room(room_id: int) -> tuple[bool, str]:
     """块级解析移除房间——不影响其他房间（v3.2 修复：旧版会连带删除后续房间）"""
     if not SETTINGS.exists():
         return False, "settings.toml 不存在"
-    text = SETTINGS.read_bytes().decode("utf-8-sig")
+    text = SETTINGS.read_text(encoding="utf-8-sig")   # universal newlines：读入即归一
     lines = text.splitlines(keepends=True)
     out, removed = [], False
     i, n = 0, len(lines)
@@ -510,7 +552,7 @@ def remove_room(room_id: int) -> tuple[bool, str]:
         out.append(ln); i += 1
     if not removed:
         return False, "未找到该房间"
-    SETTINGS.write_text("".join(out), encoding="utf-8")
+    _write_settings("".join(out))
     return True, "已移除（需重启容器生效）"
 
 
