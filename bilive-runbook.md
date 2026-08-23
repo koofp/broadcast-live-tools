@@ -8,7 +8,7 @@
 
 **本地存档模式**：只录制，摘除 scan/upload（保护原始文件、零投稿风险）。
 
-- 镜像 `bilive-fixed:0.3.1` = 官方 0.3.1 + WBI修复版blrec + openai-whisper（源码 `bilive/Dockerfile.fixed`，已 git 提交 `1e5ae94`）
+- 镜像 `bilive-fixed:0.3.1` = 官方 0.3.1 + WBI修复版blrec + openai-whisper（源码 `bilive/Dockerfile.fixed`，已 git 提交 `(见git log)`）
 - 编排 `bilive-docker/docker-compose.yml`：
   - 控制台 **仅 127.0.0.1:22333**，密码 `Bil1veLocal2026`
   - 挂载覆盖 `/app/start.sh` → `start-local.sh`（record + tail 保 PID1；scan/upload 已摘除）
