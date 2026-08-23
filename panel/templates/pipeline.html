@@ -62,8 +62,7 @@ App.pageInit.pipeline = async function(){
     }
   };
   const paint = (d) => {
-    $('p-lock').textContent = d.locked?'处理中':'空闲';
-    $('p-lock').className = d.locked?'v warn':'v ok';
+    App.q('#p-lock').innerHTML = d.locked?'<span class="live-dot"></span>处理中':'<span style="color:var(--ok)">空闲</span>';
     App.q('#p-holder').textContent = d.holder||'';
     App.q('#p-active').textContent = d.active_file||'—';
     App.q('#p-progress').textContent = d.progress

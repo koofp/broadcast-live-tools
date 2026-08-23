@@ -1,0 +1,14 @@
+{
+ "jobs": [
+  {
+   "id": "j1",
+   "name": "8139918_20260822-22-05-29.mp4",
+   "path": "D:\\CodeIDE\\01-Code_item\\01-Ai-item\\ai-brower-tool\\broadcast-live-tools\\bilive-docker\\Videos\\8139918\\8139918_20260822-22-05-29.mp4",
+   "priority": 0,
+   "status": "failed",
+   "created": "23:15:33",
+   "error": "TypeError('environment must be dictionary or None')"
+  }
+ ],
+ "next_id": 2
+}

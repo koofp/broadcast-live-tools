@@ -2,6 +2,7 @@
 """bilive 面板主应用 v3：多页面 + 任务队列 Worker + 房间/录制视图"""
 import html as html_lib
 import os
+import subprocess
 import threading
 import time
 from pathlib import Path
@@ -96,7 +97,11 @@ def _worker_loop():
         try:
             job = services.pop_next_job()
             if job:
-                _run_job(job)
+                try:
+                    _run_job(job)
+                except Exception as e:
+                    services.finish_job(job["id"], False, repr(e)[:200])
+                    print(f"[worker] 任务失败已记录: {repr(e)[:150]}", flush=True)
             else:
                 time.sleep(3)
         except Exception as e:

@@ -84,6 +84,15 @@ docker run -itd --name bilive_docker --restart unless-stopped \
 - **录制页 /recording**：房间卡（直播状态60s缓存/标题/在线/分段数/总大小/**正在录制实时增长**）+ 添加/移除房间（写 settings.toml + 重启容器二次确认）
 - 修复：retry.txt 统一根目录；占位 srt（无语音）跳过 AI 总结（ps1 与 Worker 双侧）；worker 子进程 key 走注册表兜底；live_status int/str 键型；settings.toml 剥 BOM（PS5.1 Set-Content 引入的 BOM 会让 tomllib 崩——**写 toml 后务必无 BOM**）
 
+## 5.9 面板 v3.1 修复与运行实录（2026-08-22 深夜）
+
+- **UI v3 视觉**：渐变 Logo、图标芯片状态卡、辉光侧边栏、脉冲直播点、圆点徽章、定制滚动条
+- **队列 Worker 实战验证**：主播连播 3h+ 期间自动接单；一次 NameError（main 漏 import subprocess）被 Worker 异常处理捕获并记录——修复后新分段 22-05-29 自动完成转写+总结
+- **429 限流应对**：OpenRouter 免费档批量总结会触发 429 → 已加专项长退避（60/120/180s）；失败项落 retry.txt 下轮优先
+- **锁自愈实测**：伪造 run.lock → 面板独占探测自动清除 ✓
+- **统计口径修正**：积压=无srt 或 有srt无summary（10 分钟内活跃分段不计）；ChangeExtension 尾点坑已绕开（Substring 截断）
+- 已知显示坑：PowerShell 表格对 <50KB 文件 MB 舍入显示 0——判断文件是否为空用精确字节数
+
 ## 5. 扩展资产
 
 ## 5.7 运维自动化套件（2026-08-22 上线，经子代理对抗评审）

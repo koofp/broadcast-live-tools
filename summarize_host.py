@@ -64,16 +64,24 @@ def summarize(srt_path: Path, prompt_tpl: str, key: str) -> bool:
     prompt = prompt_tpl.replace("{srt}", srt)
 
     last_err = None
-    for attempt in range(3):  # 2次指数退避重试
+    for attempt in range(4):  # 3次重试；429限流用长退避
         try:
             t0 = time.time()
             text = call_oxalpha(prompt, key)
             tmp = str(out) + ".tmp"
             Path(tmp).write_text(text, encoding="utf-8")
             os.replace(tmp, out)
-            u_snip = ""
             print(f"[done] {out.name} | {time.time()-t0:.0f}s", flush=True)
             return True
+        except urllib.error.HTTPError as e:
+            last_err = f"HTTP {e.code}"
+            if e.code == 429:
+                wait = 60 * (attempt + 1)   # 限流：60/120/180s
+                print(f"[429 rate-limited] {wait}s 后重试 ({attempt+1}/3)", flush=True)
+                time.sleep(wait)
+            else:
+                print(f"[http {e.code}] 不重试", flush=True)
+                break
         except Exception as e:
             last_err = repr(e)[:200]
             wait = 5 * (2 ** attempt)
