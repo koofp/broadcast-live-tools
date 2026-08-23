@@ -1,6 +1,23 @@
-# bilive 排障与部署 Runbook（终版 · 实战复盘）
+# bilive 排障与部署 Runbook（v3 · 2026-08-23 终版）
 
-> 更新：2026-08-22 v2。经对抗性子代理评审后的最终架构。
+> 更新：2026-08-23 v3。全链路无人值守闭环验证通过。
+
+## 快速导航
+
+| 你要做什么 | 去哪儿 |
+|---|---|
+| 看一眼系统状态 | 面板 http://127.0.0.1:9090/ → 仪表盘 |
+| 看录制房间/直播状态 | 面板 → 录制 |
+| 查看所有分段转写进度 | 面板 → 分段库 |
+| 调度处理/查看日志/清理 | 面板 → 流水线 |
+| 阅读 AI 总结 | 面板 → 总结库 |
+| 改提示词/回滚/系统信息 | 面板 → 设置 |
+| 手动处理一批分段 | `process_all.ps1`（或面板流水线页"入队全部"）|
+| 检查磁盘/监控 | `status.ps1`（或面板仪表盘）|
+| 清理旧分段 | 面板流水线页"归档预览"→"Apply"（或计划任务每日自动）|
+| 生成全量复盘报告 | `python report_gen.py` → REPORT.md |
+| 质量抽检某段 | `python qa_check.py <srt路径>` |
+| 开/关面板 | `python panel.py`（计划任务已配置开机自启）|
 
 ---
 
@@ -176,3 +193,46 @@ docker cp _summarize.py bilive_docker:/tmp/sum.py && docker exec bilive_docker p
 2026-08-22 曾因命令中误写为 `01-Code-item`（连字符），Windows 视为新目录，blrec 在
 `D:\CodeIDE\01-Code-item\...\bilive-docker\logs` 下产生了一套幽灵日志（已清理）。
 所有脚本均已使用 $PSScriptRoot 相对路径，不会再发生；手工执行命令时注意核对。
+
+## 10. 关键文件清单（当前工作区）
+
+```
+broadcast-live-tools/
+├── bilive-docker/            # 运行数据盘（勿整体删）：Videos 录像成果 / settings.toml 房间配置 / compose 编排
+├── bilive/                   # 上游开源代码（只读，独立 git）
+├── panel/                    # Web 面板 v3（main.py 路由 / services.py 逻辑 / templates / static）
+├── panel.py                  # 面板薄入口（计划任务 bilive-panel 指向此文件）
+├── process_all.ps1           # 批量转写+总结（计划任务 bilive-pipeline 每30分钟）
+├── cleanup.ps1               # 归档清理（计划任务 bilive-cleanup 每2小时，安全条件内建）
+├── status.ps1                # 监控：容器/DNS劫持/磁盘/积压
+├── transcribe_host.py        # faster-whisper small 转写（宿主，2.7x 实时）
+├── summarize_host.py         # OpenRouter ox-alpha 总结（429 长退避，占位跳过）
+├── qa_check.py               # 质量验收（幻觉/重复/巨块/编码/五段结构/时间戳）
+├── report_gen.py             # 全量复盘 REPORT.md
+├── bilive-runbook.md         # 本文档（唯一权威排障手册）
+├── start_batch.cmd           # 带 key 的批次启动器（gitignored，含 key 勿外传）
+└── .gitignore                # Videos/logs/models/retry/run.lock/start_batch.cmd 等
+```
+
+## 11. 已注册的计划任务
+
+| 任务名 | 触发 | 作用 |
+|---|---|---|
+| bilive-pipeline | 每 30 分钟 | 批量转写+总结兜底 |
+| bilive-cleanup | 每 2 小时 | 磁盘 <150GB 时归档清理（含 keep 白名单/垃圾桶/锁重试）|
+| bilive-panel | 开机登录 | 面板自启 |
+
+## 12. 新对话启动提示（上下文切换）
+
+> 把下面整段作为新对话的第一句话发给 AI，即可无缝接续本项目。
+
+```
+继续 bilive 直播录制系统（工作区 D:\CodeIDE\01-Code_item\01-Ai-item\ai-brower-tool\broadcast-live-tools）。
+先读 bilive-runbook.md（含快速导航、架构、路径规范、文件清单、计划任务），
+再看 REPORT.md 和 status.ps1 的当前状态，然后告诉我当前系统健康度和待办事项。
+```
+
+如需继续推进某项任务，追加一句（例如）：
+- 「继续优化面板 UI/逻辑」→ 参考 panel/ 下的 main.py、services.py、templates、static
+- 「继续排查录制/转写问题」→ 参考 runbook §0.5 根因定论、§5.8 已知修复
+- 「继续做归档/复盘」→ 参考 cleanup.ps1、report_gen.py
