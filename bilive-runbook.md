@@ -169,3 +169,10 @@ docker cp _summarize.py bilive_docker:/tmp/sum.py && docker exec bilive_docker p
 | "家庭宽带 IP 被标记" | ❌ 出口正常；是 Clash fake-ip 污染了判断 |
 | "手机热点能解决" | ❌ 无证据支持；未验证即建议，不该 |
 | "镜像太老不能用" | 🟡 半对：镜像没跟上仓库修复，但重装 wheel 即可，无需弃用 |
+
+## 9. 路径规范（重要教训）
+
+**唯一正确路径**：`D:\CodeIDE\01-Code_item\...`（Code 后是**下划线**）。
+2026-08-22 曾因命令中误写为 `01-Code-item`（连字符），Windows 视为新目录，blrec 在
+`D:\CodeIDE\01-Code-item\...\bilive-docker\logs` 下产生了一套幽灵日志（已清理）。
+所有脚本均已使用 $PSScriptRoot 相对路径，不会再发生；手工执行命令时注意核对。
