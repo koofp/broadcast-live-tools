@@ -175,9 +175,50 @@ def pipeline_state() -> dict:
     if retry.exists():
         fails = [l for l in retry.read_text(encoding="utf-8", errors="ignore").splitlines()
                  if l.strip()][-10:]
+    duration, pct = durations_get(active) if active else (None, None)
+    pct_val = None
+    if duration and progress and progress.get("audio_time"):
+        mm = re.match(r"(\d{2}):(\d{2}):(\d{2})", progress["audio_time"])
+        if mm:
+            h, mi, s = map(int, mm.groups())
+            cur_ms = (h*3600 + mi*60 + s) * 1000
+            pct_val = min(100, round(cur_ms / (duration * 1000) * 100))
     return {"locked": LOCK.exists(), **lock_info(), "active_file": active,
             "progress": progress, "progress_ts": progress_ts,
+            "duration_sec": duration, "progress_pct": pct_val,
             "tail": lines[-30:], "failures": fails}
+
+
+_DUR_FILE = Path(__file__).resolve().parent.parent / ".durations.json"
+
+
+def durations_get(name: str):
+    """一次性 ffprobe 缓存（经容器查询，每分段仅一次）"""
+    try:
+        cache = json.loads(_DUR_FILE.read_text(encoding="utf-8"))
+    except Exception:
+        cache = {}
+    if name in cache:
+        return cache[name]
+    hit = None
+    for room in VIDEOS.iterdir():
+        p = room / name
+        if p.exists():
+            cpath = "/app/Videos/" + room.name + "/" + name
+            try:
+                out = subprocess.run(
+                    ["docker", "exec", "bilive_docker", "ffprobe", "-v", "error",
+                     "-show_entries", "format=duration", "-of", "csv=p=0", cpath],
+                    capture_output=True, text=True, timeout=20).stdout.strip()
+                hit = float(out.splitlines()[-1])
+            except Exception:
+                return None
+            break
+    if hit:
+        cache[name] = round(hit, 2)
+        try: _DUR_FILE.write_text(json.dumps(cache), encoding="utf-8")
+        except Exception: pass
+    return hit
 
 
 def trigger(one_path: str | None = None) -> dict:
