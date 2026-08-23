@@ -38,7 +38,7 @@
 App.pageInit.settings = function(){
   App.q('#btn-save').onclick=async()=>{
     const r=await(await fetch('/api/prompt',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({prompt:App.q('#prompt').value})})).json();
-    $('save-state').textContent=r.saved?(r.detail||'已保存'):('失败: '+r.reason);
+    App.q('#save-state').textContent=r.saved?(r.detail||'已保存'):('失败: '+r.reason);
     if(!r.saved)alert(r.reason); else location.reload();
   };
   const rb=App.q('#btn-rollback');

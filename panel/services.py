@@ -395,9 +395,8 @@ def defer_job(job_id: str):
 
 
 def acquire_run_lock() -> bool:
-    """非阻塞独占获取 run.lock（Worker 与 process_all.ps1 的互斥点）"""
-    if lock_info().get("locked"):
-        return False
+    """非阻塞独占获取 run.lock（Worker 与 process_all.ps1 的互斥点）。
+    open("x") 本身即原子"判锁+获取"，不再前置 lock_info() 探测（消除 TOCTOU 窗口）。"""
     try:
         global _run_lock_stream
         _run_lock_stream = open(LOCK, "x")
@@ -425,10 +424,9 @@ def pop_next_job() -> dict | None:
         if not cand:
             return None
         job = min(cand, key=lambda j: (j["priority"], int(j["id"][1:])))
-        job = dict(job)
-        job["status"] = "running"
+        job["status"] = "running"   # 先改原引用再落盘（修复：此前在拷贝上置状态，落盘仍为 queued）
         _save_queue(q)
-        return job
+        return dict(job)
 
 
 def finish_job(job_id: str, ok: bool, error: str | None = None):

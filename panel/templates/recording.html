@@ -29,7 +29,7 @@ App.pageInit.recording = async function(){
     for(const r of d.rooms){
       const liveTxt = r.live===1?'<span class="live-dot"></span>直播中':(r.live===0?'<span style="opacity:.4">○</span> 未开播':'? 状态未知');
       const liveCls = r.live===1?'ok':(r.live===0?'mut':'bad');
-      const cur = r.current?`<div class="hint">🔴 正在录制：${r.current}（${r.current_mb}MB）</div>`:'';
+      const cur = r.current?`<div class="hint">🔴 正在录制：${App.esc(r.current)}（${r.current_mb}MB）</div>`:'';
       const conf = r.configured?'':'<div class="hint bad-hint">未在 settings.toml 中（不会自动录制）</div>';
       const el=document.createElement('div'); el.className='card roomcard';
       el.innerHTML=`<div class="k">房间 ${r.room}</div>

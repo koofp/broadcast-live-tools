@@ -1,6 +1,7 @@
 /* bilive 面板公共 JS：fetch 封装 / 轮询管理(页面隐藏暂停) / 通用动作 */
 window.App = (() => {
   const q = (sel) => document.querySelector(sel);
+  const esc = (s) => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   const pageInit = {};   // 每页注册器容器
   let refreshCb = null;
 
@@ -60,7 +61,7 @@ window.App = (() => {
   function log(s){const l=q('#log');if(l){l.textContent+=s+"\n";l.scrollTop=l.scrollHeight;}}
   setInterval(()=>{const c=q('#side-clock');if(c)c.textContent=new Date().toLocaleTimeString('zh-CN',{hour12:false});},1000);
 
-  return {q, pageInit, fetchJSON, postJSON, setCard, badge, toast, onRefresh, viewSum, viewSrt, procOne, log};
+  return {q, esc, pageInit, fetchJSON, postJSON, setCard, badge, toast, onRefresh, viewSum, viewSrt, procOne, log};
 })();
 
 // 每页注册器：App.pageInit.<page>() 由模板页脚本定义

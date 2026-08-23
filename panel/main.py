@@ -50,18 +50,20 @@ def _wants_json(request: Request) -> bool:
 
 
 # ---------- 任务队列 Worker ----------
-_worker_env = None
+_worker_env_cache = None
 
 
-def _worker_env():
-    global _worker_env
-    if _worker_env is None:
+def _get_worker_env():
+    """修复(评审高危)：原函数与模块级变量同名——def 覆盖赋值后 global 永非 None，
+    return 返回函数自身 → subprocess.run(env=<function>) 必抛 TypeError，队列全瘫痪。"""
+    global _worker_env_cache
+    if _worker_env_cache is None:
         e = os.environ.copy()
         k = services.get_api_key()
         if k:
             e["OPENROUTER_API_KEY"] = k
-        _worker_env = e
-    return _worker_env
+        _worker_env_cache = e
+    return _worker_env_cache
 
 
 def _run_job(job: dict):
@@ -78,9 +80,13 @@ def _run_job(job: dict):
 
         if not srt.exists():
             print(f"[job {job['id']}] 转写 {Path(v).name}", flush=True)
-            subprocess.run(["python", str(BASE.parent / "transcribe_host.py"), v,
-                            "--model", model], env=_worker_env(),
-                           creationflags=BELOW_NORMAL, cwd=str(services.ROOT))
+            try:
+                subprocess.run(["python", str(BASE.parent / "transcribe_host.py"), v,
+                                "--model", model], env=_get_worker_env(),
+                               creationflags=BELOW_NORMAL, cwd=str(services.ROOT),
+                               timeout=3600)
+            except subprocess.TimeoutExpired:
+                print(f"[job {job['id']}] 转写超时(1h)，放弃本次", flush=True)
         if not srt.exists():
             services.finish_job(job["id"], False, "转写无产出")
             return
@@ -90,10 +96,13 @@ def _run_job(job: dict):
             return
         if not sum_md.exists():
             print(f"[job {job['id']}] 总结 {Path(v).name}", flush=True)
-            subprocess.run(["python", str(BASE.parent / "summarize_host.py"), str(srt),
-                            "--prompt-file", str(Path(services.ROOT) / "prompt.txt")],
-                           env=_worker_env(), creationflags=BELOW_NORMAL,
-                           cwd=str(services.ROOT))
+            try:
+                subprocess.run(["python", str(BASE.parent / "summarize_host.py"), str(srt),
+                                "--prompt-file", str(Path(services.ROOT) / "prompt.txt")],
+                               env=_get_worker_env(), creationflags=BELOW_NORMAL,
+                               cwd=str(services.ROOT), timeout=1800)
+            except subprocess.TimeoutExpired:
+                print(f"[job {job['id']}] 总结超时(30min)", flush=True)
         services.finish_job(job["id"], sum_md.exists(),
                             None if sum_md.exists() else "总结无产出")
     finally:
@@ -184,8 +193,11 @@ def _recording_payload() -> dict:
     for rid in all_ids:
         d = services.VIDEOS / rid
         lv = live.get(rid, {})
-        segs = sorted(list(d.glob("*.mp4")) + list(d.glob("*.flv")),
-                      key=lambda p: p.stat().st_mtime, reverse=True) if d.exists() else []
+        try:
+            segs = sorted(list(d.glob("*.mp4")) + list(d.glob("*.flv")),
+                          key=lambda p: p.stat().st_mtime, reverse=True) if d.exists() else []
+        except OSError:
+            segs = []   # 目录被锁/权限异常时不拖垮整页
         newest_age_min = int((time.time() - segs[0].stat().st_mtime) / 60) if segs else None
         lstat = lv.get("live_status")
         cur = None
@@ -340,9 +352,9 @@ async def api_rooms_remove(req: Request):
 
 @app.post("/api/docker/restart")
 async def api_docker_restart():
-    subprocess.Popen(["docker", "compose", "restart"],
-                     cwd=str(services.VIDEOS.parent), **{
-                         k: v for k, v in services._SUBPROC_KW.items() if k == "cwd"})
+    # 修复(评审高危)：原 kwargs 过滤保留 cwd 与显式 cwd 重复 → TypeError，重启按钮必 500
+    subprocess.Popen(["docker", "compose", "restart"], cwd=str(services.VIDEOS.parent),
+                     creationflags=subprocess.CREATE_NO_WINDOW)
     return {"sent": True}
 
 

@@ -56,8 +56,8 @@ App.pageInit.pipeline = async function(){
     for(const j of jobs){
       const tr=document.createElement('tr');
       tr.innerHTML=`<td><span class="badge ${stCls[j.status]||'b-none'}">${stTxt[j.status]||j.status}</span></td>
-        <td>${j.priority===0?'★插队':'批量'}</td><td>${j.name}</td><td>${j.created}</td>
-        <td class="mut">${j.error||''}</td>`;
+        <td>${j.priority===0?'★插队':'批量'}</td><td>${App.esc(j.name)}</td><td>${j.created}</td>
+        <td class="mut">${App.esc(j.error||'')}</td>`;
       tb.appendChild(tr);
     }
   };
