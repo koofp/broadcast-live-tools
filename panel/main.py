@@ -3,6 +3,7 @@
 import html as html_lib
 import os
 import subprocess
+import sys
 import threading
 import time
 from pathlib import Path
@@ -16,6 +17,13 @@ from fastapi.templating import Jinja2Templates
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from . import services
+
+# ---- 输出重定向：print 永远有效（防管道断裂 EINVAL 杀死 Worker 线程）----
+_logs_dir = Path(__file__).resolve().parent.parent / "logs"
+_logs_dir.mkdir(exist_ok=True)
+_stdout_log = open(_logs_dir / "panel-stdout.log", "a", buffering=1, encoding="utf-8")
+sys.stdout = _stdout_log
+sys.stderr = _stdout_log
 
 BASE = Path(__file__).resolve().parent
 app = FastAPI(title="bilive panel", docs_url=None, redoc_url=None)
@@ -109,9 +117,22 @@ def _worker_loop():
             time.sleep(5)
 
 
+def _worker_supervisor():
+    """外层守护：Worker 线程任何异常都自动重启，永不静默死亡"""
+    while True:
+        try:
+            _worker_loop()
+        except Exception as e:
+            try:
+                print(f"[supervisor] Worker 异常重启: {repr(e)[:180]}", flush=True)
+            except Exception:
+                pass
+        time.sleep(10)
+
+
 @app.on_event("startup")
 async def start_worker():
-    threading.Thread(target=_worker_loop, daemon=True).start()
+    threading.Thread(target=_worker_supervisor, daemon=True).start()
 
 
 # ---------- 页面 ----------
@@ -121,25 +142,33 @@ async def page_dashboard(request: Request):
     pl = services.pipeline_state()
     jobs = services.queue_snapshot()
     running = next((j for j in jobs if j["status"] == "running"), None)
+    stall_note = None
+    if (st.get("newest_age_min") or 0) > 45:
+        ids = [int(r["room_id"]) for r in services.rooms_from_settings()]
+        lv = services.live_status(ids) if ids else {}
+        if ids and all((lv.get(i, {}) or {}).get("live_status") == 0 for i in ids):
+            stall_note = "全部房间未开播——待机中，开播自动录制"
+        else:
+            stall_note = "有房间在播但未写入——检查网络/Clash/容器日志"
     return nav(request, "仪表盘", "dashboard.html",
                st=st, activity=pl["tail"][-6:], failures=pl["failures"],
-               active_file=(running or {}).get("name"), progress=pl.get("progress"))
+               active_file=(running or {}).get("name"), progress=pl.get("progress"),
+               stall_note=stall_note)
 
 
 @app.get("/recording", response_class=HTMLResponse)
 async def page_recording(request: Request):
     cfg_rooms = {str(r["room_id"]): r for r in services.rooms_from_settings()}
-    live = services.live_status([int(r) for r in cfg_rooms] +
-                               [int(d.name) for d in services.VIDEOS.iterdir()
-                                if d.is_dir() and d.name.isdigit()])
+    disk_rooms = [d.name for d in services.VIDEOS.iterdir()
+                  if d.is_dir() and d.name.isdigit()]
+    all_ids = sorted(set(list(cfg_rooms) + disk_rooms), key=lambda x: int(x))
+    live = services.live_status([int(r) for r in all_ids])
     cards = []
-    for d in sorted(services.VIDEOS.iterdir(), key=lambda p: p.name):
-        if not (d.is_dir() and d.name.isdigit()):
-            continue
-        rid = d.name
+    for rid in all_ids:
+        d = services.VIDEOS / rid
         lv = live.get(rid, {})
         segs = sorted(list(d.glob("*.mp4")) + list(d.glob("*.flv")),
-                      key=lambda p: p.stat().st_mtime, reverse=True)
+                      key=lambda p: p.stat().st_mtime, reverse=True) if d.exists() else []
         cur = segs[0] if segs and (time.time() - segs[0].stat().st_mtime) < 600 else None
         total_gb = round(sum(p.stat().st_size for p in segs) / 2**30, 2)
         cards.append({
@@ -287,8 +316,14 @@ async def api_rooms_add(req: Request):
         rid = int(b.get("room_id"))
     except Exception:
         return JSONResponse({"ok": False, "reason": "房间号必须是数字"}, status_code=400)
+    v = services.validate_room(rid)
+    if not v.get("valid"):
+        return JSONResponse({"ok": False,
+                             "reason": f"房间不存在或无法访问（{v.get('reason','校验失败')}）"},
+                            status_code=400)
     ok, msg = services.add_room(rid)
-    return JSONResponse({"ok": ok, "reason": msg, "need_restart": ok})
+    return JSONResponse({"ok": ok, "reason": f"{msg} · {v.get('title','')}",
+                         "need_restart": ok})
 
 
 @app.post("/api/rooms/remove")

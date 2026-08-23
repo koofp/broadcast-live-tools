@@ -439,30 +439,54 @@ def add_room(room_id: int) -> tuple[bool, str]:
 
 
 def remove_room(room_id: int) -> tuple[bool, str]:
+    """块级解析移除房间——不影响其他房间（v3.2 修复：旧版会连带删除后续房间）"""
     if not SETTINGS.exists():
         return False, "settings.toml 不存在"
-    lines = SETTINGS.read_text(encoding="utf-8-sig").splitlines(keepends=True)
-    out, skip, removed = [], False, 0
-    for ln in lines:
-        s = ln.strip()
-        if s.startswith("[[tasks]]"):
-            skip = True; removed_here = False
+    text = SETTINGS.read_bytes().decode("utf-8-sig")
+    lines = text.splitlines(keepends=True)
+    out, removed = [], False
+    i, n = 0, len(lines)
+    while i < n:
+        ln = lines[i]
+        if ln.strip() == "[[tasks]]":
+            block = [ln]; i += 1
+            while i < n:
+                s = lines[i].strip()
+                if s.startswith("[[tasks]]") or (s.startswith("[") and s.endswith("]") and not s.startswith("[[")):
+                    break
+                block.append(lines[i]); i += 1
+            rid = None
+            for bl in block:
+                if bl.strip().startswith("room_id"):
+                    rid = bl.split("=", 1)[1].strip()
+            if rid == str(room_id):
+                removed = True
+                if i < n and lines[i].strip() == "":
+                    i += 1
+                continue
+            out.extend(block)
             continue
-        if skip:
-            if s.startswith("[") and not s.startswith("[[tasks]]"):
-                skip = False
-            elif s.startswith("room_id") and s.split("=")[1].strip() == str(room_id):
-                removed = 1; continue
-            elif s == "":
-                continue
-            else:
-                continue
-        out.append(ln)
+        out.append(ln); i += 1
     if not removed:
         return False, "未找到该房间"
     SETTINGS.write_text("".join(out), encoding="utf-8")
     return True, "已移除（需重启容器生效）"
 
+
+def validate_room(room_id: int) -> dict:
+    """向 B 站校验房间真实性"""
+    try:
+        req = urllib.request.Request(
+            f"https://api.live.bilibili.com/room/v1/Room/get_info?room_id={room_id}",
+            headers={"User-Agent": "Mozilla/5.0"})
+        with urllib.request.urlopen(req, timeout=8) as r:
+            d = json.loads(r.read().decode("utf-8", "ignore"))
+        if d.get("code") == 0 and d.get("data"):
+            return {"valid": True, "title": d["data"].get("title", ""),
+                    "live_status": d["data"].get("live_status")}
+        return {"valid": False, "reason": d.get("message") or f"code={d.get('code')}"}
+    except Exception as e:
+        return {"valid": False, "reason": repr(e)[:120]}
 
 def get_api_key() -> str:
     """env → 用户注册表兜底（解决计划任务/不同父进程差异）"""
