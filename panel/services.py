@@ -91,42 +91,24 @@ _STATUS_LOCK = threading.Lock()
 
 def container_status(max_age: float = 10.0) -> str:
     """轻量容器状态：单次 docker ps + 缓存。
-    替代"只为拿一个容器状态字符串就跑全量 status.ps1（5~10 秒）"的旧做法。"""
+    替代"只为拿一个容器状态字符串就跑全量 status.ps1（5~10 秒）"的旧做法。
+    评审[低]修正：docker ps 子进程移出临界区，docker 卡顿时不再锁内串行排队。"""
     with _CTN_LOCK:
         now = time.time()
-        if now - _ctn_cache["ts"] > max_age:
-            try:
-                _ctn_cache["val"] = subprocess.run(
-                    ["docker", "ps", "--filter", "name=bilive_docker",
-                     "--format", "{{.Status}}"],
-                    **{k: v for k, v in _SUBPROC_KW.items() if k != 'cwd'},
-                    timeout=15).stdout.strip()
-            except Exception:
-                _ctn_cache["val"] = ""
-            _ctn_cache["ts"] = now
-        return _ctn_cache["val"] or "stopped"
-
-
-def _refresh_status_once() -> dict:
-    """跑一次 status.ps1 并写入缓存（后台刷新线程与冷启动首调共用）。"""
-    out = _ps(PS_STATUS, timeout=180)
-    js = None
-    for line in reversed(out.splitlines()):
-        line = line.strip()
-        if line.startswith("{"):
-            try:
-                js = json.loads(line)
-                break
-            except Exception:
-                continue
-    d = dict(js or {})
-    d["container"] = container_status(max_age=0)
-    d.update(lock_info())
-    d["ts"] = time.strftime("%H:%M:%S")
-    with _STATUS_LOCK:
-        _status_cache["ts"] = time.time()
-        _status_cache["data"] = dict(d)
-    return d
+        if now - _ctn_cache["ts"] <= max_age:
+            return _ctn_cache["val"] or "stopped"
+    try:
+        val = subprocess.run(
+            ["docker", "ps", "--filter", "name=bilive_docker",
+             "--format", "{{.Status}}"],
+            **{k: v for k, v in _SUBPROC_KW.items() if k != 'cwd'},
+            timeout=15).stdout.strip()
+    except Exception:
+        val = ""
+    with _CTN_LOCK:
+        _ctn_cache["val"] = val
+        _ctn_cache["ts"] = time.time()
+    return val or "stopped"
 
 
 def _refresh_status_once() -> dict:
@@ -174,18 +156,26 @@ _COLD_LOCK = threading.Lock()
 
 
 def status() -> dict:
-    """返回最近已知状态（立即返回，绝不阻塞在 status.ps1 上）。
-    后台线程每 20 秒刷新；缓存为空（冷启动首刷未完成）时走单飞同步刷新：
-    并发请求只放一个进去，其余等它写完缓存直接取（评审[高]：修惊群）。"""
+    """返回最近已知状态。常态=后台线程每 20 秒刷新，本函数只读缓存立即返回；
+    缓存为空（冷启动首刷未完成）时走单飞同步刷新：并发请求只放一个进去，
+    其余等它写完缓存直接取（评审[高]：修惊群）。冷启动首个请求可能等待
+    一次 status.ps1 的耗时（数秒~最坏 180s 超时），属已知豁免行为。"""
     with _STATUS_LOCK:
         data = _status_cache["data"]
     if data is not None:
         return dict(data)
-    with _COLD_LOCK:
-        with _STATUS_LOCK:
-            if _status_cache["data"] is not None:
-                return dict(_status_cache["data"])
-        return _refresh_status_once()
+    acquired = _COLD_LOCK.acquire(timeout=30)
+    try:
+        if acquired:
+            with _STATUS_LOCK:
+                if _status_cache["data"] is not None:
+                    return dict(_status_cache["data"])
+            return _refresh_status_once()
+        # 等锁超时：别人还在刷 → 返回空基线，避免无限挂起
+        return {"container": "refreshing", "ts": time.strftime("%H:%M:%S")}
+    finally:
+        if acquired:
+            _COLD_LOCK.release()
 
 
 def _room_dirs():

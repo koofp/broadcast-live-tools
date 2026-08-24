@@ -14,12 +14,12 @@ foreach ($f in 'panel.py','panel\main.py','panel\services.py','session.py',
     if ($LASTEXITCODE -ne 0) { $fail += "py_compile: $f" }
 }
 
-# 1.5) 单元测试（无需 API/网络的纯逻辑回归）
-python tests\test_merge_archived.py 2>&1 | Out-Null
-if ($LASTEXITCODE -ne 0) { $fail += 'unit: tests\test_merge_archived.py' }
+# 1.5) 单元测试（无需 API/网络的纯逻辑回归；失败保留细节便于排查）
+$uOut = python tests\test_merge_archived.py 2>&1
+if ($LASTEXITCODE -ne 0) { $fail += ("unit: tests\test_merge_archived.py → " + ($uOut | Select-Object -Last 2) -join ' ') }
 
-# 2) PowerShell 解析 + BOM
-foreach ($f in 'process_all.ps1','cleanup.ps1','status.ps1','verify.ps1') {
+# 2) PowerShell 解析 + BOM（含全部接线/测试脚本——评审：漏一个都可能静默坏掉）
+foreach ($f in 'process_all.ps1','cleanup.ps1','status.ps1','verify.ps1','notify.ps1','backup_metadata.ps1','selftest.ps1','bilive-unlock-check.ps1') {
     $raw = Get-Content $f -Raw
     $errs = $null
     [System.Management.Automation.PSParser]::Tokenize($raw, [ref]$errs) | Out-Null
@@ -39,11 +39,26 @@ foreach ($f in 'models\faster-whisper-small', 'bilive-docker\settings.toml', 'pr
 python -c "import tomllib,pathlib; tomllib.loads(pathlib.Path(r'bilive-docker/settings.toml').read_bytes().decode('utf-8-sig'))" 2>$null
 if ($LASTEXITCODE -ne 0) { $fail += 'settings.toml 解析失败' }
 
-# 5) 面板冒烟（在跑才测）
+# 5) 面板冒烟：未运行则尝试经桌面启动器拉起一次（评审[中]：面板起不来不能绿灯）
+$up = $false
 try {
     $r = Invoke-WebRequest 'http://127.0.0.1:9090/api/recording' -UseBasicParsing -TimeoutSec 10
-    if ($r.StatusCode -ne 200) { $fail += "面板 /api/recording HTTP $($r.StatusCode)" }
-} catch { if (-not $Quiet) { Write-Host '[warn] 面板未运行，跳过冒烟' } }
+    $up = ($r.StatusCode -eq 200)
+} catch { $up = $false }
+if (-not $up) {
+    if (-not $Quiet) { Write-Host '[info] 面板未运行，尝试经启动器拉起…' }
+    if (Test-Path "$env:USERPROFILE\Desktop\启动面板.cmd") {
+        Start-Process -FilePath "$env:USERPROFILE\Desktop\启动面板.cmd" -WindowStyle Minimized
+    } else { Start-Process -FilePath (Join-Path $PSScriptRoot '启动面板.cmd') -WindowStyle Minimized }
+    foreach ($i in 1..15) {
+        Start-Sleep 1
+        try {
+            $r = Invoke-WebRequest 'http://127.0.0.1:9090/api/recording' -UseBasicParsing -TimeoutSec 3
+            if ($r.StatusCode -eq 200) { $up = $true; break }
+        } catch {}
+    }
+    if (-not $up) { $fail += '面板拉起失败（15 秒内未上线），详见 logs\panel-stdout.log' }
+}
 
 if ($fail) {
     Write-Host '[FAIL]' -ForegroundColor Red

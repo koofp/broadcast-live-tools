@@ -353,6 +353,7 @@ broadcast-live-tools/
 ├── session.py                 # 场次聚合与整场总结（聚类/缓存/场级LLM总结/CLI纠错；详见 §5.99）
 ├── notify.ps1                 # 轻量通知：Windows Toast + notify.log（30分钟节流，四类事件已接线）
 ├── backup_metadata.ps1        # 元数据备份（bilive-backup 每日10:00；robocopy 增量不删历史）
+├── selftest.ps1               # ⚡端到端自测一键化（合成静音视频驱动全链路六步断言，不耗API）
 ├── tests\test_merge_archived.py  # 归档回填幂等回归单测（verify.ps1 调用）
 ├── qa_check.py                # 质量验收（幻觉/重复/巨块/编码/五段结构/时间戳）
 ├── report_gen.py              # 全量复盘 REPORT.md（含已归档分段溯源）
