@@ -168,6 +168,10 @@ docker run -itd --name bilive_docker --restart unless-stopped \
   ⚠️ **本仓库仅限本地，永不 push 公网**；换机迁移需手动拷贝该文件。
 - 口径统一：分段库"录制中…"徽章改为"最近写入…"（mtime 启发式与录制页 v2 区分，
   主播下播后 10 分钟内不再误导）。
+- **批处理两阶段化（隔离审计采纳）**：process_all 先规划（[plan] 待转写/待总结）再一次性调用
+  transcribe_host / summarize_host——Whisper 权重**单次加载**，消除此前逐段 ~15s 重复加载；
+  面板"当前处理"已适配批量模式。审计其余发现核实为不成立（文件名含房间号→缓存键不碰撞、
+  keep.txt 可写 `房间号*模式` 表达房间限定）。
 - 未来项备忘：接入失败通知渠道后可启用 qa_check 告警化；deleted.log 年增速极低暂不需轮转。
 
 ## 5. 扩展资产

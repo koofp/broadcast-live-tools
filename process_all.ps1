@@ -67,6 +67,7 @@ try {
     Log "开始批量处理: $($targets.Count) 个文件"
 
     $failList = @()
+    $toTranscribe = @(); $toSummarize = @()
     foreach ($v in $targets) {
         $name = Split-Path $v -Leaf
         # 锁心跳：持续刷新 mtime，防止长批次(>2h)被下一轮计划任务误判死锁强抢
@@ -81,21 +82,49 @@ try {
         if ((Test-Path $sum) -and ((Get-Item $sum).Length -gt 0)) { Log "[skip] $name 全流程已完成"; continue }
 
         if (-not (Test-Path $srt) -or (Get-Item $srt).Length -eq 0) {
-            Log "[1/2] 转写 $name"
-            python transcribe_host.py $v --model (Join-Path $PSScriptRoot 'models\faster-whisper-small') 2>&1 |
-                ForEach-Object { Log "  $_" }
-            if ($LASTEXITCODE -ne 0) { Log "[warn] transcribe_host exit=$LASTEXITCODE ($name)" }
+            Log "[plan] 待转写 $name"
+            $toTranscribe += $v
+            continue
         }
-        if ((Test-Path $srt) -and (Get-Item $srt).Length -gt 0 -and -not (Test-Path $sum)) {
-            if ((Get-Content $srt -Raw -ErrorAction SilentlyContinue) -match '\[无语音内容\]') {
-                Log "[skip] $name 占位srt(无语音)，跳过总结"
-                [IO.File]::WriteAllText($sum, "（该分段无语音内容，未生成总结）", (New-Object Text.UTF8Encoding($false)))
-                continue
-            }
-            Log "[2/2] 总结 $name"
-            python summarize_host.py $srt 2>&1 | ForEach-Object { Log "  $_" }
-            if ($LASTEXITCODE -ne 0) { Log "[warn] summarize_host exit=$LASTEXITCODE ($name)" }
-            if (-not (Test-Path $sum)) { $failList += $srt }
+        if ((Get-Content $srt -Raw -ErrorAction SilentlyContinue) -match '\[无语音内容\]') {
+            Log "[skip] $name 占位srt(无语音)，跳过总结"
+            [IO.File]::WriteAllText($sum, "（该分段无语音内容，未生成总结）", (New-Object Text.UTF8Encoding($false)))
+            continue
+        }
+        Log "[plan] 待总结 $name"
+        $toSummarize += $srt
+    }
+
+    # 批量转写：单进程一次加载 Whisper 权重（审计采纳——逐段调用曾每段重载 ~15s）
+    if ($toTranscribe.Count -gt 0) {
+        Log ("[1/2] 批量转写 {0} 段（模型仅加载一次）" -f $toTranscribe.Count)
+        python transcribe_host.py $toTranscribe --model (Join-Path $PSScriptRoot 'models\faster-whisper-small') 2>&1 |
+            ForEach-Object { Log "  $_" }
+        if ($LASTEXITCODE -ne 0) { Log "[warn] transcribe_host exit=$LASTEXITCODE" }
+        # 转写产出复核：新 srt 归入总结队列；仍无产出的记失败
+        foreach ($v in $toTranscribe) {
+            $name = Split-Path $v -Leaf
+            $srt = [IO.Path]::ChangeExtension($v, '.srt')
+            if ((Test-Path $srt) -and ((Get-Item $srt).Length -gt 0)) {
+                $sum = [IO.Path]::ChangeExtension($v, '.summary.md')
+                if (Test-Path $sum) { continue }
+                if ((Get-Content $srt -Raw -ErrorAction SilentlyContinue) -match '\[无语音内容\]') {
+                    [IO.File]::WriteAllText($sum, "（该分段无语音内容，未生成总结）", (New-Object Text.UTF8Encoding($false)))
+                    Log "[skip] $name 占位srt(无语音)，跳过总结"
+                    continue
+                }
+                $toSummarize += $srt
+            } else { Log "[fail] 转写无产出 $name"; $failList += $srt }
+        }
+    }
+
+    # 批量总结：同进程顺序处理全部待总结段（含按房间自动选择的提示词）
+    if ($toSummarize.Count -gt 0) {
+        Log ("[2/2] 批量总结 {0} 段" -f $toSummarize.Count)
+        python summarize_host.py $toSummarize 2>&1 | ForEach-Object { Log "  $_" }
+        if ($LASTEXITCODE -ne 0) { Log "[warn] summarize_host exit=$LASTEXITCODE" }
+        foreach ($s in $toSummarize) {
+            if (-not (Test-Path ([IO.Path]::ChangeExtension($s, '.summary.md')))) { $failList += $s }
         }
     }
     # retry.txt 对账：已产出 summary 的条目剔除 + 去重；清零则删除文件

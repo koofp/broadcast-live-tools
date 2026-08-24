@@ -190,8 +190,11 @@ def pipeline_state() -> dict:
     lines = tail_log(60)
     active, progress, progress_ts = None, None, None
     for ln in reversed(lines):
-        if active is None and "[1/2] 转写 " in ln:
-            active = ln.split("转写 ")[-1].strip()
+        if active is None:
+            if "[1/2] 转写 " in ln:
+                active = ln.split("转写 ")[-1].strip()
+            elif "[1/2] 批量转写 " in ln:
+                active = "(批量转写中)"   # 审计采纳后的多段合跑模式，无单一活跃文件
         if progress is None:
             m = _PROGRESS_RE.search(ln)
             if m:
