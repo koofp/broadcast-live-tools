@@ -59,7 +59,8 @@ $days = [math]::Round($freeGB / 72, 1)
 if ($days -gt 2) { W G "磁盘 ${freeGB}GB (可录≈${days}天)" }
 elseif ($days -gt 1) { W Y "磁盘 ${freeGB}GB (仅${days}天!) 跑 cleanup.ps1"; $issues += 'disk' }
 else { W R "磁盘 ${freeGB}GB (不足1天!) 立即归档!"; $issues += 'disk'
-    try { & (Join-Path $PSScriptRoot 'notify.ps1') -Title '磁盘告急' -Text "D 盘仅 ${freeGB}GB（不足1天），立即归档清理" -Level bad } catch {} }
+    # Text 用固定模板：动态数值会让节流键失效导致反复弹窗（对抗评审[高]）；精确值见状态输出与缓存
+    try { & (Join-Path $PSScriptRoot 'notify.ps1') -Title '磁盘告急' -Text 'D 盘可用容量不足 1 天，立即归档清理' -Level bad } catch {} }
 
 # 6. 全房间积压（可靠枚举：mp4 + 孤儿flv；10分钟内活跃不计）
 $rooms = 0; $pending = 0; $done = 0

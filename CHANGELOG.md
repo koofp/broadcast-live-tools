@@ -3,6 +3,15 @@
 > 变更史。新变更记录到这里（按日期倒序），runbook 只保留"当前状态"不再堆时序日志。
 > 格式参考 Keep a Changelog；提交号可 `git show <hash>` 查看全文。
 
+## 2026-08-24 · 通知/备份对抗评审加固
+
+- **fix `notify.ps1` 加固**：节流键 GetHashCode→SHA256（跨会话稳定）；戳文件 24h 自动
+  清理；info 级 SuppressPopup（仅落动作中心不抢注意力）、bad 级长驻留；非交互会话
+  早期退出。status 磁盘告急 Text 改固定模板（动态数值曾绕过节流反复弹窗）。
+- **fix `backup_metadata.ps1` 加固**：SYSTEM 会话 USERPROFILE 防护（兜底 C:\bilive_backup）；
+  配置拷贝逐项容错（目标盘满不静默半失败）；注明 queue.json 原子写无撕裂风险。
+- **chore**：清理无用文件 panel_err.log（0 字节）与 settings.toml.bak（CRCRLF 损坏态备份）。
+
 ## 2026-08-24 · P0 落地：通知渠道与元数据备份
 
 - **feat `notify.ps1` + 接线**：Windows Toast（落动作中心）+ notify.log 双通道，30 分钟
