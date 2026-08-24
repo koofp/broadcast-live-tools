@@ -57,6 +57,31 @@ def one_liner(sm_path: Path) -> str | None:
     return None
 
 
+def session_lines(room: Path) -> list:
+    """场次视图（读 session.py 的缓存；无则跳过）。"""
+    sf = room / "_sessions" / "sessions.json"
+    if not sf.exists():
+        return []
+    try:
+        data = json.loads(sf.read_text(encoding="utf-8"))
+    except Exception:
+        return []
+    out = [f"### 房间 {room.name} · 场次", "",
+           "| 场次ID | 时间范围 | 段数 | 总结 | 标题 |", "|---|---|---|---|---|"]
+    for s in data.get("sessions", []):
+        sp = room / "_sessions" / f"{s['id']}.summary.md"
+        if sp.exists():
+            head = sp.read_text(encoding="utf-8", errors="ignore")[:300]
+            m = re.search(r"session-fingerprint:\s*([^\s-]+)", head)
+            st = "✅" if (m and m.group(1) == s.get("fingerprint")) else "⚠️过期"
+        else:
+            st = "—"
+        out.append(f"| {s['id']} | {s['start'][5:16]} ~ {s['end_est'][11:16]} | "
+                   f"{s['segment_count']} | {st} | {s.get('title','')} |")
+    out.append("")
+    return out
+
+
 def main(out_file="REPORT.md"):
     # 已归档（deleted.log）合并进来，保证复盘不随清理蒸发
     archived = set()
@@ -110,6 +135,12 @@ def main(out_file="REPORT.md"):
                      f"{r.get('字幕条数','n/a')} | {nov} | {r.get('总结','-')} | {(r.get('一句话') or '')[:50]} |")
 
     done = sum(1 for r in rows if r["总结"] == "有")
+    # 场次视图（有缓存的房间才输出）
+    for room in sorted(VIDEOS.iterdir()):
+        if room.is_dir():
+            out_lines = session_lines(room)
+            if out_lines:
+                lines += ["", "## 场次视图"] + out_lines
     out = ROOT / out_file
     out.write_text("\n".join(lines), encoding="utf-8")
     print(f"[done] {len(rows)} 段（含总结 {done}）→ {out}")

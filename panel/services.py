@@ -284,12 +284,19 @@ def archive(preview_only: bool = True) -> tuple[str, int]:
 
 
 def _resolve_out(room: str, name: str, ext: str) -> Path | None:
-    """ext 形如 '.summary.md'/'.srt'；兼容传入名带或不带该后缀"""
+    """ext 形如 '.summary.md'/'.srt'；兼容传入名带或不带该后缀。
+    场次总结存于房间下 _sessions/ 子目录：name 匹配场次ID模式时优先探测。"""
     room_dir = VIDEOS / room
     stem = name[:-len(ext)] if name.endswith(ext) else \
            (name[:-4] if name.endswith(".mp4") or name.endswith(".flv") else name)
     cand = room_dir / (stem + ext)
-    return cand if cand.exists() else None
+    if cand.exists():
+        return cand
+    if re.fullmatch(r"\d{8}_\d{6}", stem):   # 场次ID → _sessions 子目录
+        cand = room_dir / "_sessions" / (stem + ext)
+        if cand.exists():
+            return cand
+    return None
 
 
 def find_summary(room: str, name: str) -> Path | None:
@@ -302,10 +309,21 @@ def find_srt(room: str, name: str) -> Path | None:
 
 def summaries_list(query: str = "") -> list:
     out = []
+    items = []
     for s in sorted(VIDEOS.glob("*/*.summary.md"),
                     key=lambda p: p.stat().st_mtime, reverse=True):
-        item = {"room": s.parent.name, "video": s.name.replace(".summary.md", ".mp4"),
-                "base": s.name.replace(".summary.md", ""),
+        items.append((s, "segment"))
+    for s in sorted(VIDEOS.glob("*/_sessions/*.summary.md"),
+                    key=lambda p: p.stat().st_mtime, reverse=True):
+        items.append((s, "session"))
+    items.sort(key=lambda t: t[0].stat().st_mtime, reverse=True)
+    for s, kind in items:
+        base = s.name.replace(".summary.md", "")
+        # 场次总结在 Videos/<房间>/_sessions/ 下：房间号取上级目录（parent 是 _sessions）
+        room = s.parent.parent.name if kind == "session" else s.parent.name
+        item = {"room": room, "video": base + ".mp4",
+                "base": base,
+                "name": s.name, "kind": kind,
                 "date": time.strftime("%Y-%m-%d %H:%M", time.localtime(s.stat().st_mtime))}
         if query and query.lower() not in json.dumps(item, ensure_ascii=False).lower():
             continue
