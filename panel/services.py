@@ -174,7 +174,10 @@ def tail_log(n: int = 40) -> list:
     n = max(1, min(n, 500))
     if not LOG_DIR.exists():
         return []
-    logs = sorted(LOG_DIR.glob("*.log"), key=lambda p: p.stat().st_mtime)
+    # 只认日期命名的流水线日志（alert.log/deleted.log 等旁路日志不得抢占"最近活动"）
+    logs = sorted([p for p in LOG_DIR.glob("*.log")
+                   if re.match(r"\d{4}-\d{2}-\d{2}\.log$", p.name)],
+                  key=lambda p: p.stat().st_mtime)
     if not logs:
         return []
     with open(logs[-1], "rb") as f:

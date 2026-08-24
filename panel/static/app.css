@@ -236,3 +236,21 @@ dialog#dlg::backdrop{background:rgba(4,6,10,.6);backdrop-filter:blur(3px)}
 .roomcard:hover{border-color:var(--line2);transform:translateY(-2px);box-shadow:var(--shadow-lg)}
 .roomcard .v.sm{font-size:15px;font-weight:650}
 .roomcard .row-actions{margin:12px 0 0}
+
+/* ---------- 流程条（仪表盘：录制→转写→总结→复盘） ---------- */
+.flowbar{display:flex;align-items:stretch;gap:8px;margin-bottom:24px;flex-wrap:wrap}
+.fstep{flex:1;min-width:158px;display:flex;align-items:center;gap:11px;text-decoration:none;
+  color:var(--fg);background:linear-gradient(180deg,var(--card-hi),var(--card-lo));
+  border:1px solid var(--line);border-radius:12px;padding:12px 15px;
+  transition:transform .16s,border-color .16s,box-shadow .16s}
+.fstep:hover{transform:translateY(-2px);border-color:rgba(109,139,255,.45);box-shadow:var(--shadow-lg)}
+.fnum{width:26px;height:26px;border-radius:99px;flex:none;
+  background:rgba(109,139,255,.15);color:var(--acc2);
+  display:inline-flex;align-items:center;justify-content:center;font-weight:700;font-size:12px}
+.fstep.is-done .fnum{background:rgba(52,211,153,.14);color:var(--ok)}
+.fstep.has-work .fnum{background:rgba(251,191,36,.14);color:var(--warn)}
+.ftxt{display:flex;flex-direction:column;line-height:1.35;min-width:0}
+.ftxt b{font-size:13px;font-weight:650}
+.ftxt i{font-style:normal;font-size:11px;color:var(--mut);font-variant-numeric:tabular-nums;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.fsep{align-self:center;color:var(--faint);font-size:14px;flex:none}

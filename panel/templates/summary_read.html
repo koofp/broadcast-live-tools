@@ -13,7 +13,7 @@
 
 {% block pagejs %}
 <script>
-App.pageInit.summaryRead = function(){
+App.pageInit['summary-read'] = function(){
   App.q('#btn-copy-md').onclick=async()=>{
     try{await navigator.clipboard.writeText(window.__COPYMD__);App.toast('已复制');}
     catch(e){App.toast('复制失败');}

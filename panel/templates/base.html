@@ -6,23 +6,26 @@
 <title>{% block title %}{{ title }}{% endblock %} · bilive</title>
 <meta name="color-scheme" content="dark">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' rx='4' fill='%236d8bff'/%3E%3Cpath d='M6 4.5l5 3.5-5 3.5z' fill='%23fff'/%3E%3C/svg%3E">
-<link rel="stylesheet" href="/static/app.css?v=4">
+<link rel="stylesheet" href="/static/app.css?v=5">
 </head>
 <body data-page="{% block page %}{% endblock %}">
 <aside class="sidebar">
   <div class="logo"><span class="logo-mark">▶</span>BILIVE</div>
-  <div class="nav-label">控制台</div>
   <nav>
+    <div class="nav-label">监测</div>
     <a href="/" class="{% if request.url.path == '/' %}active{% endif %}">
       <svg viewBox="0 0 16 16"><rect x="1" y="1" width="6" height="6" rx="1.5"/><rect x="9" y="1" width="6" height="6" rx="1.5"/><rect x="1" y="9" width="6" height="6" rx="1.5"/><rect x="9" y="9" width="6" height="6" rx="1.5"/></svg>仪表盘</a>
     <a href="/recording" class="{% if request.url.path.startswith('/recording') %}active{% endif %}">
       <svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="6"/><circle cx="8" cy="8" r="2" fill="#12151c"/></svg>录制</a>
+    <div class="nav-label">处理</div>
     <a href="/segments" class="{% if request.url.path.startswith('/segments') %}active{% endif %}">
       <svg viewBox="0 0 16 16"><path d="M2 3h12v2H2zM2 7h8v2H2zM2 11h12v2H2z"/></svg>分段库</a>
     <a href="/pipeline" class="{% if request.url.path.startswith('/pipeline') %}active{% endif %}">
       <svg viewBox="0 0 16 16"><path d="M8 1a7 7 0 1 0 7 7h-2a5 5 0 1 1-5-5V1z"/><path d="M9 3h6l-3 4z"/></svg>流水线</a>
+    <div class="nav-label">产出</div>
     <a href="/summaries" class="{% if request.url.path.startswith('/summaries') %}active{% endif %}">
       <svg viewBox="0 0 16 16"><path d="M3 1h8l3 3v11H3V1zm2 4h6v1.5H5V5zm0 3h6v1.5H5V8zm0 3h4v1.5H5V11z"/></svg>总结库</a>
+    <div class="nav-label">系统</div>
     <a href="/settings" class="{% if request.url.path.startswith('/settings') %}active{% endif %}">
       <svg viewBox="0 0 16 16"><path d="M8 5a3 3 0 1 0 0 6 3 3 0 0 0 0-6zm6.5 3c0-.5-.05-1-.14-1.47l1.6-1.24-1.5-2.6-1.9.77A6.5 6.5 0 0 0 10.6 2.2L10.3.1H5.7L5.4 2.2c-.75.3-1.43.73-2.02 1.26l-1.9-.77-1.5 2.6 1.6 1.24a7.6 7.6 0 0 0 0 2.94l-1.6 1.24 1.5 2.6 1.9-.77c.59.53 1.27.96 2.02 1.26l.3 2.1h4.6l.3-2.1a6.5 6.5 0 0 0 2.02-1.26l1.9.77 1.5-2.6-1.6-1.24c.09-.47.14-.97.14-1.47z" transform="scale(0.9)"/></svg>设置</a>
   </nav>
@@ -38,6 +41,6 @@
   </header>
   {% block content %}{% endblock %}
 </main>
-<script src="/static/app.js?v=4"></script>
+<script src="/static/app.js?v=5"></script>
 {% block pagejs %}{% endblock %}
 </body></html>

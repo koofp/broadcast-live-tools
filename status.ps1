@@ -42,8 +42,15 @@ else {
 if ($fakeip -and $stall) {
     W R '劫持+停摆同时出现——立即退出 Clash 并重启容器!'; $issues += 'fakeip'
     # 红牌落盘留痕（辩论定案：无人值守时仪表盘没人看，持久 alert 供下次排查/会话发现）
-    Add-Content -LiteralPath (Join-Path $PSScriptRoot 'logs\pipeline\alert.log') `
-        -Value ("{0}`tFAKEIP+STALL`t{1}" -f (Get-Date -Format s), $newest.Name) -Encoding UTF8
+    # 30 分钟节流：面板每次刷新都会跑 status.ps1，不节流会刷屏
+    $alertFile = Join-Path $PSScriptRoot 'logs\pipeline\alert.log'
+    $last = Get-Content $alertFile -Tail 1 -ErrorAction SilentlyContinue
+    $lastTs = $null
+    if ($last) { try { $lastTs = [datetime]::ParseExact((($last -split "`t")[0]), 'yyyy-MM-ddTHH:mm:ss', $null) } catch {} }
+    if (-not $lastTs -or ((Get-Date) - $lastTs).TotalMinutes -ge 30) {
+        Add-Content -LiteralPath $alertFile `
+            -Value ("{0}`tFAKEIP+STALL`t{1}" -f (Get-Date -Format s), $newest.Name) -Encoding UTF8
+    }
 }
 # 5. 磁盘
 $freeGB = [math]::Round((Get-PSDrive D).Free/1GB, 1)

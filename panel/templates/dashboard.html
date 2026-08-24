@@ -1,7 +1,17 @@
-﻿{% extends "base.html" %}
+{% extends "base.html" %}
 {% block title %}仪表盘{% endblock %}
 {% block page %}dashboard{% endblock %}
 {% block content %}
+<div class="flowbar" id="flowbar">
+  <a class="fstep" href="/recording"><span class="fnum">1</span><span class="ftxt"><b>录制</b><i id="f-rec">检查中…</i></span></a>
+  <span class="fsep">→</span>
+  <a class="fstep" href="/segments?status=none"><span class="fnum">2</span><span class="ftxt"><b>转写</b><i id="f-tr">–</i></span></a>
+  <span class="fsep">→</span>
+  <a class="fstep" href="/pipeline"><span class="fnum">3</span><span class="ftxt"><b>总结</b><i id="f-sum">–</i></span></a>
+  <span class="fsep">→</span>
+  <a class="fstep is-done" href="/summaries"><span class="fnum">4</span><span class="ftxt"><b>复盘</b><i id="f-done">–</i></span></a>
+</div>
+
 <div class="grid">
   <div class="card"><div class="chip chip-blue"><svg viewBox="0 0 16 16"><rect x="1" y="2.5" width="14" height="9" rx="2"/><path d="M5 13.5h6v1.5H5z"/></svg></div><div class="k">容器</div><div class="v sm" id="c-container">{{ st.container or 'stopped' }}</div></div>
   <div class="card"><div class="chip chip-cyan"><svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="6" opacity=".35"/><circle cx="8" cy="8" r="2.4"/></svg></div><div class="k">最新分段</div><div class="v" id="c-newest">{{ st.newest_age_min if st.newest_age_min is not none else '-' }}<small>分钟前</small></div></div>
@@ -44,9 +54,27 @@ App.pageInit.dashboard = async function(){
     App.setCard('c-fakeip', fp?'被劫持':((d.issues||[]).includes('dns')?'解析失败':'正常'));
     App.badge('c-newest', d.newest_age_min!=null && d.newest_age_min>45);
     App.badge('c-days', d.days<2); App.badge('c-fakeip', fp);
-    App.q('#lock-state').textContent = d.locked?'后台处理中(锁激活)':'空闲';  };
+    App.q('#lock-state').textContent = d.locked?'后台处理中(锁激活)':'空闲';
+    // 流程条 · 第1段（录制）
+    const rec = document.querySelector('#f-rec');
+    if (rec) rec.textContent = (d.container||'').startsWith('Up')
+      ? ('运行中 · 最新' + (d.newest_age_min??'-') + '分钟前') : '容器未运行';
+  };
   const d = await App.fetchJSON('/api/status'); if(d) paint(d);
   App.onRefresh(async()=>{ const d=await App.fetchJSON('/api/status'); if(d) paint(d); });
+  // 流程条 · 第2/3/4段计数（由分段清单现算：待转写/待总结/已总结）
+  const files = await App.fetchJSON('/api/files');
+  if (Array.isArray(files)) {
+    const tr  = files.filter(f=>!f.srt && !f.summary && !f.is_current).length;
+    const su  = files.filter(f=> f.srt && !f.summary && !f.is_current).length;
+    const done= files.filter(f=> f.summary).length;
+    const set=(id,v,work)=>{const el=document.getElementById(id);if(!el)return;
+      el.textContent=v; const st=el.closest('.fstep');
+      if(st){st.classList.toggle('has-work', work); st.classList.toggle('is-done', !work && v>0);}};
+    set('f-tr', tr? tr+' 段待转写':'无积压', tr>0);
+    set('f-sum', su? su+' 段待总结':(tr? '等转写完成':'无积压'), su>0);
+    set('f-done', done+' 份总结', false);
+  }
 };
 </script>
 {% endblock %}

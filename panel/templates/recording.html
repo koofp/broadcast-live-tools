@@ -39,6 +39,7 @@ App.pageInit.recording = async function(){
         ${cur}${conf}
         <div class="row-actions">
           <a class="btn ghost" href="https://live.bilibili.com/${r.room}" target="_blank">直播间↗</a>
+          <a class="btn ghost" href="/segments?room=${r.room}">分段</a>
           ${r.configured?`<button class="btn danger" onclick="removeRoom(${r.room})">移除</button>`
                         :`<button class="btn" onclick="addRoom(${r.room})">加入录制</button>`}
         </div>`;
