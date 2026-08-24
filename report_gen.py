@@ -156,7 +156,8 @@ def main(out_file="REPORT.md"):
                      f"{r.get('字幕条数','n/a')} | {nov} | {r.get('总结','-')} | {(r.get('一句话') or '')[:50]} |")
 
     done = sum(1 for r in rows if r["总结"] == "有")
-    # 场次视图前置为主视图（含实际总结内容）；逐段平铺表退居其后作为明细
+    # 场次视图前置为主视图（含实际总结内容）；逐段平铺表退居其后作为明细。
+    # 插入点按表头定位（评审[中]：不硬编码头部行数，头部增删行不致错位）
     session_blocks = []
     for room in sorted(VIDEOS.iterdir()):
         if room.is_dir():
@@ -164,7 +165,13 @@ def main(out_file="REPORT.md"):
             if out_lines:
                 session_blocks += ["", "## 场次视图（整场汇报）"] + out_lines
     if session_blocks:
-        lines = lines[:4] + session_blocks + ["", "---", "", "## 逐段明细"] + lines[4:]
+        split_at = next((i for i, ln in enumerate(lines)
+                         if ln.startswith("| 房间 | 分段 |")), None)
+        if split_at is None:
+            lines += session_blocks
+        else:
+            lines = (lines[:split_at] + session_blocks
+                     + ["", "---", "", "## 逐段明细"] + lines[split_at:])
     out = ROOT / out_file
     out.write_text("\n".join(lines), encoding="utf-8")
     print(f"[done] {len(rows)} 段（含总结 {done}）→ {out}")

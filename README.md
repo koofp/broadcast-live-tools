@@ -54,7 +54,7 @@ B站直播 ──► Docker 容器 bilive_docker (blrec, WBI修复版)
 2. ps1 必须 UTF-8 **带 BOM**（WinPS 中文前提）；编辑工具会剥 BOM，verify 会抓
 3. 写 toml 一律 `write_bytes` + LF（`\r\r\n` 曾致面板与容器双崩）
 4. WinPS 5.1 读无 BOM 文本默认按 GBK——正则匹配中文内容必须 `-Encoding UTF8`
-5. **本仓库仅限本地，永不 push 公网**（历史含敏感路径语义）
+5. **仓库托管于 GitHub（koofp/broadcast-live-tools），务必保持 Private**；settings.toml 不入库（换号会填真 cookie），历史已审计无密钥（2026-08-24）
 6. 跨 WinPS5.1/pwsh7 的 FileStream 写入一律三参 `Write(b,0,len)`
 
 ## 文档地图

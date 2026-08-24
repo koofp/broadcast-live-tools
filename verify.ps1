@@ -7,12 +7,16 @@ Set-Location $PSScriptRoot
 $fail = @()
 
 # 1) Python 编译
-foreach ($f in 'panel.py','panel\main.py','panel\services.py',
+foreach ($f in 'panel.py','panel\main.py','panel\services.py','session.py',
                'transcribe_host.py','summarize_host.py','qa_check.py',
                'report_gen.py','bilibili_transcribe.py') {
     python -m py_compile $f 2>&1 | Out-Null
     if ($LASTEXITCODE -ne 0) { $fail += "py_compile: $f" }
 }
+
+# 1.5) 单元测试（无需 API/网络的纯逻辑回归）
+python tests\test_merge_archived.py 2>&1 | Out-Null
+if ($LASTEXITCODE -ne 0) { $fail += 'unit: tests\test_merge_archived.py' }
 
 # 2) PowerShell 解析 + BOM
 foreach ($f in 'process_all.ps1','cleanup.ps1','status.ps1','verify.ps1') {

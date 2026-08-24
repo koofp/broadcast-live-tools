@@ -84,6 +84,7 @@ def lock_info() -> dict:
 
 
 _ctn_cache: dict = {"ts": 0.0, "val": ""}
+_CTN_LOCK = threading.Lock()
 _status_cache: dict = {"ts": 0.0, "data": None}
 _STATUS_LOCK = threading.Lock()
 
@@ -91,18 +92,41 @@ _STATUS_LOCK = threading.Lock()
 def container_status(max_age: float = 10.0) -> str:
     """轻量容器状态：单次 docker ps + 缓存。
     替代"只为拿一个容器状态字符串就跑全量 status.ps1（5~10 秒）"的旧做法。"""
-    now = time.time()
-    if now - _ctn_cache["ts"] > max_age:
-        try:
-            _ctn_cache["val"] = subprocess.run(
-                ["docker", "ps", "--filter", "name=bilive_docker",
-                 "--format", "{{.Status}}"],
-                **{k: v for k, v in _SUBPROC_KW.items() if k != 'cwd'},
-                timeout=15).stdout.strip()
-        except Exception:
-            _ctn_cache["val"] = ""
-        _ctn_cache["ts"] = now
-    return _ctn_cache["val"] or "stopped"
+    with _CTN_LOCK:
+        now = time.time()
+        if now - _ctn_cache["ts"] > max_age:
+            try:
+                _ctn_cache["val"] = subprocess.run(
+                    ["docker", "ps", "--filter", "name=bilive_docker",
+                     "--format", "{{.Status}}"],
+                    **{k: v for k, v in _SUBPROC_KW.items() if k != 'cwd'},
+                    timeout=15).stdout.strip()
+            except Exception:
+                _ctn_cache["val"] = ""
+            _ctn_cache["ts"] = now
+        return _ctn_cache["val"] or "stopped"
+
+
+def _refresh_status_once() -> dict:
+    """跑一次 status.ps1 并写入缓存（后台刷新线程与冷启动首调共用）。"""
+    out = _ps(PS_STATUS, timeout=180)
+    js = None
+    for line in reversed(out.splitlines()):
+        line = line.strip()
+        if line.startswith("{"):
+            try:
+                js = json.loads(line)
+                break
+            except Exception:
+                continue
+    d = dict(js or {})
+    d["container"] = container_status(max_age=0)
+    d.update(lock_info())
+    d["ts"] = time.strftime("%H:%M:%S")
+    with _STATUS_LOCK:
+        _status_cache["ts"] = time.time()
+        _status_cache["data"] = dict(d)
+    return d
 
 
 def _refresh_status_once() -> dict:
@@ -132,8 +156,12 @@ def _status_refresher():
     while True:
         try:
             _refresh_status_once()
-        except Exception:
-            pass
+        except Exception as e:
+            # 评审[低]：持续失败不再静默——留痕到面板日志便于发现
+            try:
+                print("[status-refresher]", repr(e)[:150], flush=True)
+            except Exception:
+                pass
         time.sleep(20)
 
 
@@ -142,14 +170,22 @@ def start_status_refresher():
                      name="status-refresher").start()
 
 
-def status(max_age: float = 20.0) -> dict:
-    """返回最近已知状态（立即返回，绝不阻塞）。
-    缓存为空（面板刚启动且后台首刷未完成）时同步首刷一次。"""
+_COLD_LOCK = threading.Lock()
+
+
+def status() -> dict:
+    """返回最近已知状态（立即返回，绝不阻塞在 status.ps1 上）。
+    后台线程每 20 秒刷新；缓存为空（冷启动首刷未完成）时走单飞同步刷新：
+    并发请求只放一个进去，其余等它写完缓存直接取（评审[高]：修惊群）。"""
     with _STATUS_LOCK:
         data = _status_cache["data"]
-    if data is None:
+    if data is not None:
+        return dict(data)
+    with _COLD_LOCK:
+        with _STATUS_LOCK:
+            if _status_cache["data"] is not None:
+                return dict(_status_cache["data"])
         return _refresh_status_once()
-    return dict(data)
 
 
 def _room_dirs():
@@ -349,12 +385,16 @@ def sessions_index() -> dict:
     return out
 
 
+_IGNORE_LOCK = threading.Lock()   # 序列化面板侧 toggle（评审[高]：并发 subprocess 读改写 overrides 会丢更新）
+
+
 def session_ignore_toggle(room: str, sid: str) -> str:
-    """切换某场次的"忽略场级总结"标记（复用 session.py CLI，幂等）。"""
+    """切换某场次的「忽略场级总结」标记（复用 session.py CLI，幂等）。"""
     import subprocess
-    r = subprocess.run(["python", str(ROOT / "session.py"), "--ignore", room, sid],
-                       capture_output=True, text=True, encoding="utf-8", errors="ignore",
-                       cwd=str(ROOT), timeout=60)
+    with _IGNORE_LOCK:
+        r = subprocess.run(["python", str(ROOT / "session.py"), "--ignore", room, sid],
+                           capture_output=True, text=True, encoding="utf-8", errors="ignore",
+                           cwd=str(ROOT), timeout=60)
     return ((r.stdout or "") + (r.stderr or "")).strip()[-200:] or "已切换"
 
 

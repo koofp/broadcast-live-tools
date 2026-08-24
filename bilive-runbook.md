@@ -177,7 +177,7 @@ docker run -itd --name bilive_docker --restart unless-stopped \
   对股票直播的总结有系统性带偏。
 - **settings.toml 已停止入库**（git rm --cached + ignore）：[header].cookie 现为空串
   无实际泄露，但换号流程（unlock-check）会填入真值——防患未然。
-  ⚠️ **本仓库仅限本地，永不 push 公网**；换机迁移需手动拷贝该文件。
+  ⚠️ **仓库托管于 GitHub（koofp/broadcast-live-tools），务必保持 Private**；换机迁移需手动拷贝该文件。
 - 口径统一：片段库"录制中…"徽章改为"最近写入…"（mtime 启发式与录制页 v2 区分，
   主播下播后 10 分钟内不再误导）。
 - **批处理两阶段化（隔离审计采纳）**：process_all 先规划（[plan] 待转写/待总结）再一次性调用
@@ -351,6 +351,10 @@ broadcast-live-tools/
 ├── summarize_host.py          # OpenRouter ox-alpha 总结（429 长退避；按房间自动选提示词；retry对账）
 ├── prompt.txt                 # 全局总结提示词（DOTA2 游戏向）
 ├── prompt.1883948055.txt      # 房间专属提示词示例（财经向；可按房间号复制扩展）
+├── session.py                 # 场次聚合与整场总结（聚类/缓存/场级LLM总结/CLI纠错；详见 §5.99）
+├── notify.ps1                 # 轻量通知：Windows Toast + notify.log（30分钟节流，四类事件已接线）
+├── backup_metadata.ps1        # 元数据备份（bilive-backup 每日10:00；robocopy 增量不删历史）
+├── tests\test_merge_archived.py  # 归档回填幂等回归单测（verify.ps1 调用）
 ├── qa_check.py                # 质量验收（幻觉/重复/巨块/编码/五段结构/时间戳）
 ├── report_gen.py              # 全量复盘 REPORT.md（含已归档分段溯源）
 ├── bilive-runbook.md          # 本文档（权威排障手册）
@@ -358,8 +362,7 @@ broadcast-live-tools/
 ├── bilive-unlock-check.ps1    # 换号/换出口一键验证+重配（弹幕风控检测）
 ├── bilibili_transcribe.py     # 早期旁路转写工具（groq/local，留存备用）
 ├── tool-comparison.md         # 备选工具对比（历史决策依据）
-├── REPORT.md                  # 生成数据：全量分段复盘表（report_gen.py 刷新）
-├── e2e-validation/            # 早期端到端验证样例（AI总结样张/测试字幕）
+├── REPORT.md                  # 生成数据：全量分段复盘表（report_gen.py 刷新，含场次视图）
 ├── models/                    # faster-whisper-small 权重（gitignored）
 ├── logs/                      # 流水线/面板/告警日志（gitignored，流水线14天轮转）
 └── .gitignore                 # Videos/logs/models/settings.toml/retry/run.lock/queue.json 等
@@ -397,7 +400,7 @@ robocopy 增量同步 `Videos` 下全部 `*.srt/*.summary.md`（**不含 /PURGE*
 先读 README.md（架构/工程规范/路线图）和 bilive-runbook.md（排障权威：快速导航、根因定论、坑清单），
 再看 REPORT.md 和 status.ps1 的当前状态，然后告诉我当前系统健康度和待办事项。
 注意事项：面板是手动启动的（桌面「启动面板」图标）；改任何代码后必须跑 .\verify.ps1；
-本仓库永不 push 公网。
+仓库托管于 GitHub（koofp/broadcast-live-tools），务必保持 Private。
 ```
 
 如需继续推进某项任务，追加一句（例如）：
