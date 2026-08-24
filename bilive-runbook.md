@@ -32,6 +32,8 @@
 **本地存档模式**：只录制，摘除 scan/upload（保护原始文件、零投稿风险）。
 
 - 镜像 `bilive-fixed:0.3.1` = 官方 0.3.1 + WBI修复版blrec + openai-whisper（源码 `bilive/Dockerfile.fixed`，已 git 提交 `(见git log)`）
+  ⚠️ 镜像内的 openai-whisper 属历史遗留——**现役转写走宿主机 faster-whisper**（transcribe_host.py），
+  容器内 whisper 仅在手动 `docker exec` 调试时使用；容器方案脚本 bilive_pipeline.ps1 已删除。
 - 编排 `bilive-docker/docker-compose.yml`：
   - 控制台 **仅 127.0.0.1:22333**，密码 `Bil1veLocal2026`
   - 挂载覆盖 `/app/start.sh` → `start-local.sh`（record + tail 保 PID1；scan/upload 已摘除）
@@ -187,9 +189,9 @@ docker run -itd --name bilive_docker --restart unless-stopped \
 |---|---|---|
 | `status.ps1` | 红黄绿监控：容器/进程/**fake-ip劫持指纹**/分段增长采样/磁盘可录天数/全房间积压；末尾输出 JSON | 手动（10秒） |
 | `process_all.ps1` | 幂等批处理：mp4∪孤儿flv 全房间遍历→small转写→ox-alpha总结；FileStream崩溃安全锁(PID戳/2h强抢)；BelowNormal低优先级；日志 logs\pipeline\*.log(14天轮转)；失败自动进下轮 | **计划任务 bilive-pipeline 每30分钟** / 面板按钮 |
-| `cleanup.ps1` | 归档清理：仅删「srt>1KB 且有summary 且超48h」的最旧段，删至200GB；与 process_all 同锁；删除留档 deleted.log | 磁盘<150GB 时手动 -Apply |
-| `panel.py` | Web面板 127.0.0.1:9090：状态卡(容器/增长/磁盘/积压/DNS劫持)、跨房间分段表+徽章、单文件/全部处理按钮(409互斥)、提示词编辑器(校验{srt})、总结查看 | **计划任务 bilive-panel 登录自启** |
-| 计划任务 | bilive-pipeline(MINUTE/30) ✅Ready；bilive-panel(ATLogOn指定用户) ✅Ready | — |
+| `cleanup.ps1` | 归档清理 v3：删「已处理(真实段srt>1KB / 占位段有summary)+超48h」最旧段至200GB；_trash 7天回滚+keep白名单+单次20段上限；与 process_all 同锁(带锁戳)；删除留档 deleted.log | **计划任务 bilive-cleanup 每2小时**（<150GB 才实际删除）/ 面板按钮 / 手动 -Apply |
+| `panel.py` | Web面板 127.0.0.1:9090：四段流程条仪表盘、录制房间卡、跨房间分段表+徽章、任务队列+Worker、提示词编辑器、总结/字幕阅读 | **手动**：桌面「启动面板」一键拉起（计划任务已禁用；端口占用守卫防双开） |
+| 计划任务 | bilive-pipeline(每30分钟) ✅Ready；bilive-cleanup(每2小时) ✅Ready；bilive-panel ❌已禁用(2026-08-23 用户选手动) | — |
 
 ### 关键运维事实
 - **Docker Desktop 自启已确认**（HKCU Run 键）；重启链路=登录→Docker自启→compose unless-stopped→计划任务，T5 演练通过（restart 后 0 分钟新 flv 出现）
@@ -286,6 +288,13 @@ broadcast-live-tools/
 ├── report_gen.py              # 全量复盘 REPORT.md（含已归档分段溯源）
 ├── bilive-runbook.md          # 本文档（权威排障手册）
 ├── start_batch.cmd            # 带 key 的批次启动器（gitignored，含 key 勿外传）
+├── bilive-unlock-check.ps1    # 换号/换出口一键验证+重配（弹幕风控检测）
+├── bilibili_transcribe.py     # 早期旁路转写工具（groq/local，留存备用）
+├── tool-comparison.md         # 备选工具对比（历史决策依据）
+├── REPORT.md                  # 生成数据：全量分段复盘表（report_gen.py 刷新）
+├── e2e-validation/            # 早期端到端验证样例（AI总结样张/测试字幕）
+├── models/                    # faster-whisper-small 权重（gitignored）
+├── logs/                      # 流水线/面板/告警日志（gitignored，流水线14天轮转）
 └── .gitignore                 # Videos/logs/models/settings.toml/retry/run.lock/queue.json 等
 ```
 
