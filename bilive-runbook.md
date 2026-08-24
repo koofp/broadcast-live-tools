@@ -20,6 +20,7 @@
 | 手动处理一批分段 | `process_all.ps1`（或面板流水线页"入队全部"）|
 | 检查磁盘/监控 | `status.ps1`（或面板仪表盘）|
 | 改码后回归验证 | `.\verify.ps1`（30秒：py编译/ps解析/BOM/冒烟）|
+| 端到端自测（不耗API） | 合成静音视频法，见 §5.98 SOP |
 | 清理旧分段 | 面板流水线页"归档预览"→"Apply"（或计划任务每日自动）|
 | 生成全量复盘报告 | `python report_gen.py` → REPORT.md |
 | 质量抽检某段 | `python qa_check.py <srt路径>` |
@@ -180,6 +181,39 @@ docker run -itd --name bilive_docker --restart unless-stopped \
   面板"当前处理"已适配批量模式。审计其余发现核实为不成立（文件名含房间号→缓存键不碰撞、
   keep.txt 可写 `房间号*模式` 表达房间限定）。
 - 未来项备忘：接入失败通知渠道后可启用 qa_check 告警化；deleted.log 年增速极低暂不需轮转。
+
+## 5.98 端到端自测 SOP（合成视频法 · 2026-08-24 固化）
+
+不消耗 API 即可驱动"规划→批量转写→占位分支"全链路；总结路径需真实 API（步骤 5）。
+
+```powershell
+# 1) 造 8 秒静音测试视频（容器 ffmpeg 写入 _selftest 房间；非数字目录名不进面板房间卡）
+New-Item -ItemType Directory -Force '.\bilive-docker\Videos\_selftest' | Out-Null
+docker exec bilive_docker bash -c "ffmpeg -y -v error -f lavfi -i testsrc=size=320x240:rate=10 -f lavfi -i anullsrc=r=16000:cl=mono -shortest -t 8 -c:v libx264 -preset ultrafast -c:a aac /app/Videos/_selftest/selftest_001.mp4"
+
+# 2) 回拨 mtime——绕过 10 分钟写入保护（防呆设计，不是 bug）
+(Get-Item '.\bilive-docker\Videos\_selftest\selftest_001.mp4').LastWriteTime = (Get-Date).AddMinutes(-15)
+
+# 3) 跑批。预期日志：[plan] 待转写 → [1/2] 批量转写 → [skip] 占位srt(无语音) → 结束；不触发总结
+.\process_all.ps1
+
+# 4) 验证产物：selftest_001.srt 含 [无语音内容]；selftest_001.summary.md 为占位说明
+
+# 5) 总结路径（真实 API，约 20~60s）：造含真实内容的 srt →
+#    $env:OPENROUTER_API_KEY=(reg query HKCU\Environment /v OPENROUTER_API_KEY | Select-String REG_SZ) -split 'REG_SZ')[-1].Trim()
+#    python summarize_host.py <srt>   → 验证五段结构 → python qa_check.py <srt>
+
+# 6) 清理现场
+Remove-Item '.\bilive-docker\Videos\_selftest' -Recurse -Force
+```
+
+**本 SOP 首战战果**：揪出 WinPS GBK 占位符匹配 bug（§5.96 后仍潜伏，见 e7c151a）——
+实测能抓到评审抓不到的编码类故障。
+
+**测试管道坑**（伪影，非产品问题）：
+- 内联 `python -c "…中文…"` 的字面量会被 GBK 传参搅碎 → 断言请写临时 .py 文件
+- `python … | Select-Object -First N` 会掐杀上游进程（exit 变 -1）→ 看全量输出别截断
+- 每次工具调用是独立进程，`$env:` 注入不跨调用存活 → 注入与执行放同一条命令
 
 ## 5. 扩展资产
 

@@ -31,7 +31,7 @@ app = FastAPI(title="bilive panel", docs_url=None, redoc_url=None)
 templates = Jinja2Templates(directory=str(BASE / "templates"))
 app.mount("/static", StaticFiles(directory=str(BASE / "static")), name="static")
 
-VERSION = "3.0"
+VERSION = "3.2"
 BELOW_NORMAL = 0x00004000
 
 
