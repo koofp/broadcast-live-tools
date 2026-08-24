@@ -21,6 +21,8 @@
 | 检查磁盘/监控 | `status.ps1`（或面板仪表盘）|
 | 改码后回归验证 | `.\verify.ps1`（30秒：py编译/ps解析/BOM/冒烟）|
 | 端到端自测（不耗API） | 合成静音视频法，见 §5.98 SOP |
+| 场次聚合/整场总结 | `python session.py`（扫描+缓存）；`--summarize 8139918 [场次ID]`（LLM 场级总结）；`--title/--merge/--split` 纠错；详见 §5.99 |
+| 端到端自测（不耗API） | 合成静音视频法，见 §5.98 SOP |
 | 清理旧分段 | 面板流水线页"归档预览"→"Apply"（或计划任务每日自动）|
 | 生成全量复盘报告 | `python report_gen.py` → REPORT.md |
 | 质量抽检某段 | `python qa_check.py <srt路径>` |
