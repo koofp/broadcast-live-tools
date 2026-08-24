@@ -142,7 +142,10 @@ try {
         else { Remove-Item $retryFile -Force -ErrorAction SilentlyContinue }
         Log ("[retry] 对账完成，保留 {0} 条待重试" -f $kept.Count)
     }
-    if ($failList) { Log ("失败清单(下轮自动重试): " + ($failList -join '; ')) }
+    if ($failList) {
+        Log ("失败清单(下轮自动重试): " + ($failList -join '; '))
+        try { & (Join-Path $PSScriptRoot 'notify.ps1') -Title '处理失败' -Text ("{0} 段处理失败，下轮自动重试（详见流水线日志）" -f $failList.Count) -Level warn } catch {}
+    }
     Log "批量处理结束"
 } finally {
     Unlock

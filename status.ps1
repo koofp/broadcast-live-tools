@@ -50,6 +50,7 @@ if ($fakeip -and $stall) {
     if (-not $lastTs -or ((Get-Date) - $lastTs).TotalMinutes -ge 30) {
         Add-Content -LiteralPath $alertFile `
             -Value ("{0}`tFAKEIP+STALL`t{1}" -f (Get-Date -Format s), $newest.Name) -Encoding UTF8
+        try { & (Join-Path $PSScriptRoot 'notify.ps1') -Title '录制风险' -Text 'Clash 劫持+录制停摆同时出现：立即退出 Clash 并重启容器' -Level bad } catch {}
     }
 }
 # 5. 磁盘
@@ -57,7 +58,8 @@ $freeGB = [math]::Round((Get-PSDrive D).Free/1GB, 1)
 $days = [math]::Round($freeGB / 72, 1)
 if ($days -gt 2) { W G "磁盘 ${freeGB}GB (可录≈${days}天)" }
 elseif ($days -gt 1) { W Y "磁盘 ${freeGB}GB (仅${days}天!) 跑 cleanup.ps1"; $issues += 'disk' }
-else { W R "磁盘 ${freeGB}GB (不足1天!) 立即归档!"; $issues += 'disk' }
+else { W R "磁盘 ${freeGB}GB (不足1天!) 立即归档!"; $issues += 'disk'
+    try { & (Join-Path $PSScriptRoot 'notify.ps1') -Title '磁盘告急' -Text "D 盘仅 ${freeGB}GB（不足1天），立即归档清理" -Level bad } catch {} }
 
 # 6. 全房间积压（可靠枚举：mp4 + 孤儿flv；10分钟内活跃不计）
 $rooms = 0; $pending = 0; $done = 0

@@ -120,10 +120,12 @@ try {
         Write-Host "`n预览模式。确认后加 -Apply 执行。"
     } else {
         Write-Host ("完成：清理 {0} 段，释放约 {1}GB" -f $movedCount, [math]::Round($freedGB,1))
+        try { & (Join-Path $PSScriptRoot 'notify.ps1') -Title '归档清理已执行' -Text ("清理 {0} 段，释放约 {1}GB（_trash 保留 7 天可回滚）" -f $movedCount, [math]::Round($freedGB,1)) -Level info } catch {}
         $after = [math]::Round((Get-PSDrive D).Free/1GB, 1)
         if ($after -lt 160) {
             Write-Host "[警告] 清理后仍仅 ${after}GB——候选耗尽但未达标！考虑外迁或降低录制画质。" -ForegroundColor Yellow
             Add-Content -LiteralPath $DelLog -Value "$(Get-Date -Format s)`tWARN`t清理后仍不足160GB" -Encoding UTF8
+            try { & (Join-Path $PSScriptRoot 'notify.ps1') -Title '空间仍不足' -Text "清理后仅 ${after}GB：候选耗尽，考虑外迁或降低画质" -Level warn } catch {}
         }
     }
 } finally {

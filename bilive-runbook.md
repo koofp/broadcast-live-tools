@@ -22,6 +22,8 @@
 | 改码后回归验证 | `.\verify.ps1`（30秒：py编译/ps解析/BOM/冒烟）|
 | 端到端自测（不耗API） | 合成静音视频法，见 §5.98 SOP |
 | 场次聚合/整场总结 | `python session.py`（扫描+缓存）；`--summarize 8139918 [场次ID]`（LLM 场级总结）；`--title/--merge/--split` 纠错；详见 §5.99 |
+| 元数据备份 | 每日 10:00 自动（bilive-backup）；手动 `.\backup_metadata.ps1`；详见 §5.100 |
+| 主动告警 | `.\notify.ps1 -Title "..." -Text "..." [-Level bad]`（Windows Toast+notify.log，30分钟节流）|
 | 端到端自测（不耗API） | 合成静音视频法，见 §5.98 SOP |
 | 清理旧分段 | 面板流水线页"归档预览"→"Apply"（或计划任务每日自动）|
 | 生成全量复盘报告 | `python report_gen.py` → REPORT.md |
@@ -369,7 +371,22 @@ broadcast-live-tools/
 |---|---|---|
 | bilive-pipeline | 每 30 分钟 | 批量转写+总结兜底 |
 | bilive-cleanup | 每 2 小时 | 磁盘 <150GB 时归档清理（含 keep 白名单/垃圾桶/锁重试）|
+| bilive-backup | 每日 10:00 | 元数据备份：srt/summary/场次/配置 → 用户目录（robocopy 增量不删历史）|
 | bilive-panel | **已禁用**（用户选择手动启动 2026-08-23）| 看板需要时双击桌面「启动面板」；录制/管线/清理不受影响；恢复自启：`Enable-ScheduledTask -TaskName bilive-panel` |
+
+## 5.100 通知渠道与元数据备份（2026-08-24 P0 落地）
+
+**通知**：`notify.ps1` = Windows Toast（落动作中心，错过可查）+ `logs/notify.log` 持久留痕，
+同一内容 30 分钟节流，Toast 失败自动降级仅日志。已接线四类事件：
+- status.ps1：劫持+停摆红牌（与 alert.log 同步）、磁盘不足 1 天
+- process_all.ps1：批次结束有失败段（warn）
+- cleanup.ps1：清理执行（info）、清理后空间仍不足 160GB（warn）
+手动告警：`.\notify.ps1 -Title "..." -Text "..." [-Level info|warn|bad]`
+
+**备份**：`backup_metadata.ps1` → `C:\Users\<用户>\bilive_backup`（与 D 盘数据盘物理隔离）。
+robocopy 增量同步 `Videos` 下全部 `*.srt/*.summary.md`（**不含 /PURGE**——被 cleanup 清理的
+分段其字幕/总结在备份端永久保留，历史资产不蒸发）+ settings.toml/prompt*/queue.json/keep.txt。
+实测：101 文件 2.4MB。恢复方法：把备份目录内文件拷回对应位置即可（元数据与视频同名配对）。
 
 ## 12. 新对话启动提示（上下文切换）
 

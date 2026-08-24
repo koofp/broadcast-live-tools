@@ -44,6 +44,7 @@ B站直播 ──► Docker 容器 bilive_docker (blrec, WBI修复版)
 | 看系统状态 | 双击桌面「启动面板」→ 仪表盘（四段流程条：录制→转写→总结→复盘） |
 | 处理积压 | 自动（计划任务每30分钟）；手动：面板流水线页「处理全部积压」 |
 | 看复盘 | 面板总结库，或 `python report_gen.py` 刷新 REPORT.md |
+| 备份 | 每日 10:00 自动（bilive-backup → `C:\Users\<用户>\bilive_backup`）；手动 `.\backup_metadata.ps1` |
 
 **面板不影响录制**：关掉面板，录制/转写/总结/清理照常全自动运转。
 
@@ -68,8 +69,8 @@ B站直播 ──► Docker 容器 bilive_docker (blrec, WBI修复版)
 ## 路线图
 
 ### P0 · 现在就值得做（低成本高价值）
-- [ ] **通知渠道**：Windows Toast / ServerChan——接通后解锁 alert 红牌推送、失败清单告警、磁盘水位提醒（当前 alert.log 只落盘无人看）
-- [ ] **元数据备份**：每日计划任务把 `*.srt + *.summary.md + settings + queue.json` 打包到异盘（录像单盘单副本，至少保住劳动成果）
+- [x] **通知渠道** ✅ 2026-08-24：Windows Toast（落动作中心）+ `logs/notify.log`，30 分钟节流；已接线 status 红牌/磁盘告急、process 失败、cleanup 执行与空间不足四类事件
+- [x] **元数据备份** ✅ 2026-08-24：`backup_metadata.ps1` 计划任务 bilive-backup 每日 10:00 → `C:\Users\<用户>\bilive_backup`；robocopy 增量**永不删历史**（已清理段的字幕/总结永久保留在备份）
 - [x] **补测试盲区**：批量总结路径真实执行测试 ✅ 2026-08-24（真实 API 17s 出稿，五段结构齐全，qa_check PASS；占位分支此前已实测）
 - [ ] 用户决策项：房间 8139918 是否恢复自动录制（TI 已收官）；退出 Clash TUN
 

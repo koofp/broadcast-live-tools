@@ -3,6 +3,16 @@
 > 变更史。新变更记录到这里（按日期倒序），runbook 只保留"当前状态"不再堆时序日志。
 > 格式参考 Keep a Changelog；提交号可 `git show <hash>` 查看全文。
 
+## 2026-08-24 · P0 落地：通知渠道与元数据备份
+
+- **feat `notify.ps1` + 接线**：Windows Toast（落动作中心）+ notify.log 双通道，30 分钟
+  节流，Toast 失败降级仅日志；接线四类事件：status 劫持+停摆红牌、磁盘不足 1 天、
+  process 批次失败、cleanup 执行与空间不足。失败路径已实测（坏视频→FAIL→Toast）。
+- **feat `backup_metadata.ps1` + 计划任务 bilive-backup（每日 10:00）**：robocopy 增量
+  备份 Videos 全部 srt/summary/场次 + settings/prompt/queue/keep → 用户目录
+ （与 D 盘物理隔离）；**不含 /PURGE**——被清理分段的字幕/总结在备份端永久保留。
+  实测：101 文件 2.4MB。README 路线图 P0 两项勾结。
+
 ## 2026-08-24 · 场次聚合功能上线
 
 - **feat(session) `e8e5b29`**：场次聚合与整场总结 v1——`session.py` 把分段按 50 分钟
