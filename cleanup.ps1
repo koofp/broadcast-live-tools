@@ -7,6 +7,7 @@
 param([switch]$Apply, [switch]$Force)
 $ErrorActionPreference = 'Stop'
 Set-Location $PSScriptRoot
+try { [Console]::OutputEncoding = [Text.Encoding]::UTF8 } catch {}   # 面板按 UTF-8 捕获预览输出（修 GBK 乱码）
 $Videos = Join-Path $PSScriptRoot 'bilive-docker\Videos'
 $LockFile = Join-Path $PSScriptRoot 'run.lock'
 $TrashDir = Join-Path $Videos '_trash'

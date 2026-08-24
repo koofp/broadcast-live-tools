@@ -143,6 +143,7 @@ def _worker_supervisor():
 @app.on_event("startup")
 async def start_worker():
     threading.Thread(target=_worker_supervisor, daemon=True).start()
+    services.start_status_refresher()   # 后台常驻刷新状态（架构定案：请求永不阻塞在 status.ps1 上）
 
 
 # ---------- 页面 ----------
@@ -227,7 +228,8 @@ def _recording_payload() -> dict:
 def page_segments(request: Request):
     files = services.files()
     rooms = sorted({f["room"] for f in files})
-    return nav(request, "分段库", "segments.html", files=files, rooms=rooms)
+    return nav(request, "片段库", "segments.html", files=files, rooms=rooms,
+               sessions=services.sessions_index())
 
 
 @app.get("/pipeline", response_class=HTMLResponse)
@@ -348,6 +350,22 @@ async def api_rooms_remove(req: Request):
         return JSONResponse({"ok": False, "reason": "房间号必须是数字"}, status_code=400)
     ok, msg = await run_in_threadpool(services.remove_room, rid)
     return JSONResponse({"ok": ok, "reason": msg, "need_restart": ok})
+
+
+@app.get("/api/sessions")
+def api_sessions():
+    return services.sessions_index()
+
+
+@app.post("/api/sessions/ignore")
+async def api_sessions_ignore(req: Request):
+    """切换某场次的「忽略场级总结」标记（复用 session.py CLI，幂等）。"""
+    b = await req.json()
+    room, sid = b.get("room"), b.get("session_id")
+    if not room or not sid:
+        return JSONResponse({"ok": False, "reason": "参数缺失"}, status_code=400)
+    msg = await run_in_threadpool(services.session_ignore_toggle, str(room), str(sid))
+    return {"ok": True, "message": msg}
 
 
 @app.post("/api/docker/restart")

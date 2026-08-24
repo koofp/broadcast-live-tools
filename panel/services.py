@@ -105,31 +105,51 @@ def container_status(max_age: float = 10.0) -> str:
     return _ctn_cache["val"] or "stopped"
 
 
-def status(max_age: float = 20.0) -> dict:
-    """全量红黄绿状态（跑 status.ps1）。带 TTL 缓存——此前每次页面/轮询都冷启动
-    一个 PowerShell 进程跑 5~10 秒，且在 async 路由里直接阻塞事件循环，
-    是面板页面跳转缓慢的最大单一来源。"""
+def _refresh_status_once() -> dict:
+    """跑一次 status.ps1 并写入缓存（后台刷新线程与冷启动首调共用）。"""
+    out = _ps(PS_STATUS, timeout=180)
+    js = None
+    for line in reversed(out.splitlines()):
+        line = line.strip()
+        if line.startswith("{"):
+            try:
+                js = json.loads(line)
+                break
+            except Exception:
+                continue
+    d = dict(js or {})
+    d["container"] = container_status(max_age=0)
+    d.update(lock_info())
+    d["ts"] = time.strftime("%H:%M:%S")
     with _STATUS_LOCK:
-        now = time.time()
-        if _status_cache["data"] is not None and now - _status_cache["ts"] < max_age:
-            return dict(_status_cache["data"])
-        out = _ps(PS_STATUS, timeout=180)
-        js = None
-        for line in reversed(out.splitlines()):
-            line = line.strip()
-            if line.startswith("{"):
-                try:
-                    js = json.loads(line)
-                    break
-                except Exception:
-                    continue
-        d = dict(js or {})
-        d["container"] = container_status(max_age=0)
-        d.update(lock_info())
-        d["ts"] = time.strftime("%H:%M:%S")
-        _status_cache["ts"] = now
+        _status_cache["ts"] = time.time()
         _status_cache["data"] = dict(d)
-        return d
+    return d
+
+
+def _status_refresher():
+    """后台常驻刷新（架构定案：请求永不阻塞在 status.ps1 上）。daemon 随进程退出。"""
+    while True:
+        try:
+            _refresh_status_once()
+        except Exception:
+            pass
+        time.sleep(20)
+
+
+def start_status_refresher():
+    threading.Thread(target=_status_refresher, daemon=True,
+                     name="status-refresher").start()
+
+
+def status(max_age: float = 20.0) -> dict:
+    """返回最近已知状态（立即返回，绝不阻塞）。
+    缓存为空（面板刚启动且后台首刷未完成）时同步首刷一次。"""
+    with _STATUS_LOCK:
+        data = _status_cache["data"]
+    if data is None:
+        return _refresh_status_once()
+    return dict(data)
 
 
 def _room_dirs():
@@ -312,6 +332,32 @@ def _first_section_line(t: str, name: str) -> str:
     return m.group(1).strip().splitlines()[0][:100] if m and m.group(1).strip() else ""
 
 
+def sessions_index() -> dict:
+    """各房间的场次缓存汇总：{room: [session...]}（session.py 生成）。"""
+    out = {}
+    if not VIDEOS.exists():
+        return out
+    for d in VIDEOS.iterdir():
+        if not d.is_dir() or not d.name.isdigit():
+            continue
+        sf = d / "_sessions" / "sessions.json"
+        if sf.exists():
+            try:
+                out[d.name] = json.loads(sf.read_text(encoding="utf-8")).get("sessions", [])
+            except Exception:
+                pass
+    return out
+
+
+def session_ignore_toggle(room: str, sid: str) -> str:
+    """切换某场次的"忽略场级总结"标记（复用 session.py CLI，幂等）。"""
+    import subprocess
+    r = subprocess.run(["python", str(ROOT / "session.py"), "--ignore", room, sid],
+                       capture_output=True, text=True, encoding="utf-8", errors="ignore",
+                       cwd=str(ROOT), timeout=60)
+    return ((r.stdout or "") + (r.stderr or "")).strip()[-200:] or "已切换"
+
+
 def summaries_list(query: str = "") -> list:
     out = []
     items = []
@@ -329,7 +375,8 @@ def summaries_list(query: str = "") -> list:
                 "base": base,
                 "name": s.name, "kind": kind,
                 "date": time.strftime("%Y-%m-%d %H:%M", time.localtime(s.stat().st_mtime)),
-                "title": "", "time_range": "", "segment_count": None, "one_liner": ""}
+                "title": "", "time_range": "", "segment_count": None, "one_liner": "",
+                "ignored": False}
         if kind == "session":
             # 场次条目增强：标题/时间范围/段数（sessions.json）+ 一句话（summary 文件）
             try:
@@ -340,6 +387,7 @@ def summaries_list(query: str = "") -> list:
                 item["time_range"] = (f"{sess.get('start','')[5:16]}–"
                                       f"{sess.get('end_est','')[11:16]}")
                 item["segment_count"] = sess.get("segment_count")
+                item["ignored"] = bool(sess.get("ignored"))
             except Exception:
                 pass
             try:

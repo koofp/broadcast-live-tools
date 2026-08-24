@@ -1,20 +1,23 @@
 {% extends "base.html" %}
-{% block title %}分段库{% endblock %}
+{% block title %}片段库{% endblock %}
 {% block page %}segments{% endblock %}
+{% block h1 %}片段库{% endblock %}
+{% block topbar_extra %}<span class="sub">把每场直播切成片段，逐段转写与总结</span>{% endblock %}
 {% block content %}
 <div class="toolbar">
   <select id="f-room"><option value="">全部房间</option>{% for r in rooms %}<option value="{{ r }}">{{ r }}</option>{% endfor %}</select>
+  <select id="f-session"><option value="">全部场次</option></select>
   <select id="f-status">
     <option value="">全部状态</option><option value="none">未处理</option>
     <option value="srt">已转写</option><option value="summary">已总结</option>
   </select>
   <input id="f-q" placeholder="搜索文件名…">
-  <span class="mut" style="margin-left:auto">{{ files|length }} 个文件</span>
+  <span class="mut" style="margin-left:auto">{{ files|length }} 个片段</span>
 </div>
 <table class="tbl"><thead><tr>
- <th>房间</th><th>文件</th><th>大小</th><th>修改时间</th><th>状态</th><th>操作</th>
+ <th>文件</th><th>大小</th><th>修改时间</th><th>状态</th><th>操作</th>
 </tr></thead><tbody id="rows"></tbody></table>
-<p class="mut">提示：正在写入的分段（10 分钟内活跃）不会出现在处理候选里。</p>
+<p class="mut">提示：正在写入的片段（10 分钟内活跃）不会进入处理候选；场次分组由 session.py 聚合（50 分钟间隔内视为同一场直播）。</p>
 
 <dialog id="dlg"><div class="dlg-head"><b id="dlg-title"></b><button class="btn ghost" onclick="App.q('#dlg').close()">✕</button></div>
 <pre id="dlg-body" class="logbox"></pre></dialog>
@@ -23,38 +26,95 @@
 {% block pagejs %}
 <script>
 App.pageInit.segments = async function(){
-  // 深链支持：/segments?room=xxx&status=none&q=关键字（仪表盘流程条/录制卡入口）
   const usp = new URLSearchParams(location.search);
-  if (usp.get('room'))   { const sel=App.q('#f-room'); sel.value=usp.get('room');
-                           if(sel.value!==usp.get('room')) sel.value=''; }  // 非法房间号回退"全部"
-  if (usp.get('status')) App.q('#f-status').value = usp.get('status');
-  if (usp.get('q'))      App.q('#f-q').value      = usp.get('q');
   const files = await App.fetchJSON('/api/files'); if(!files) return;
+  const sidx = await App.fetchJSON('/api/sessions') || {};
+  const segSession = {};
+  for (const [room, list] of Object.entries(sidx))
+    for (const s of list)
+      for (const g of (s.segments || [])) segSession[room + '/' + g.name] = s;
+
   const rows = App.q('#rows');
-  function render(){
-    const room=App.q('#f-room').value, st=App.q('#f-status').value, q=App.q('#f-q').value.toLowerCase();
-    rows.innerHTML='';
-    for(const r of files){
-      if(room && r.room!==room) continue;
-      if(st==='srt' && (!r.srt||r.summary)) continue;
-      if(st==='summary' && !r.summary) continue;
-      if(st==='none' && (r.srt||r.summary)) continue;
-      if(q && !r.name.toLowerCase().includes(q)) continue;
-      const canProc = !r.summary && !r.is_current;
-      const tr=document.createElement('tr');
-      tr.innerHTML=`<td>${App.esc(r.room)}</td><td>${App.esc(r.name)}</td><td>${r.size_gb}GB</td><td>${r.mtime}</td>
-        <td><span class="badge ${r.status_class}">${r.status_label}</span></td>
-        <td class="acts">
-          ${r.summary?`<button class="btn ghost" onclick="App.viewSum('${r.room}','${r.name}')">总结</button>
-                       <button class="btn ghost" onclick="App.viewSrt('${r.room}','${r.name}')">字幕</button>`:''}
-          ${canProc?`<button class="btn" onclick="App.procOne('${r.name}')">${r.srt?'补总结':'转写+总结'}</button>`
-                   :(r.is_current?'<span class="mut">最近写入…</span>':'')}
-        </td>`;
-      rows.appendChild(tr);
-    }
-    if(!rows.children.length) rows.innerHTML='<tr><td colspan="6" class="mut center">无匹配分段</td></tr>';
+  // 场次筛选选项（新→旧）
+  const selS = App.q('#f-session');
+  const opts = [];
+  for (const [room, list] of Object.entries(sidx))
+    for (const s of list) opts.push({ v: room + '|' + s.id,
+      t: `${room} · ${s.title || s.id} ${s.start.slice(5, 16)}` });
+  opts.sort((a, b) => b.v.localeCompare(a.v));
+  for (const o of opts) { const op = document.createElement('option'); op.value = o.v; op.textContent = o.t; selS.appendChild(op); }
+  const setSel = (id, v) => { if (!v) return; const el = App.q(id); el.value = v; if (el.value !== v) el.value = ''; };
+  setSel('#f-room', usp.get('room'));
+  setSel('#f-session', usp.get('session'));
+  if (usp.get('status')) App.q('#f-status').value = usp.get('status');
+  if (usp.get('q')) App.q('#f-q').value = usp.get('q');
+
+  window.toggleIgnore = async (room, sid, ignored) => {
+    const r = await App.postJSON('/api/sessions/ignore', { room, session_id: sid });
+    App.toast((r && r.message) || (ignored ? '已恢复总结' : '已忽略该场总结'));
+    setTimeout(() => location.reload(), 700);
+  };
+
+  function rowHtml(r) {
+    const canProc = !r.summary && !r.is_current;
+    return `<td>${App.esc(r.name)}</td><td>${r.size_gb}GB</td><td>${r.mtime}</td>
+      <td><span class="badge ${r.status_class}">${r.status_label}</span></td>
+      <td class="acts">
+        ${r.summary ? `<button class="btn ghost" onclick="App.viewSum('${r.room}','${r.name}')">总结</button>
+                     <button class="btn ghost" onclick="App.viewSrt('${r.room}','${r.name}')">字幕</button>` : ''}
+        ${canProc ? `<button class="btn" onclick="App.procOne('${r.name}')">${r.srt ? '补总结' : '转写+总结'}</button>`
+                  : (r.is_current ? '<span class="mut">最近写入…</span>' : '')}
+      </td>`;
   }
-  App.q('#f-room').onchange=render; App.q('#f-status').onchange=render; App.q('#f-q').oninput=render;
+
+  function render() {
+    const room = App.q('#f-room').value, st = App.q('#f-status').value,
+          q = App.q('#f-q').value.toLowerCase(), sess = App.q('#f-session').value;
+    rows.innerHTML = '';
+    const groups = new Map();
+    for (const r of files) {
+      if (room && r.room !== room) continue;
+      if (st === 'srt' && (!r.srt || r.summary)) continue;
+      if (st === 'summary' && !r.summary) continue;
+      if (st === 'none' && (r.srt || r.summary)) continue;
+      if (q && !r.name.toLowerCase().includes(q)) continue;
+      const s = segSession[r.room + '/' + r.name];
+      const key = s ? r.room + '|' + s.id : '_un';
+      if (sess && key !== sess) continue;
+      if (!groups.has(key)) groups.set(key, { s, room: r.room, list: [] });
+      groups.get(key).list.push(r);
+    }
+    const ordered = [...groups.entries()].sort((a, b) => {
+      if (a[0] === '_un') return 1; if (b[0] === '_un') return -1;
+      return (b[1].s?.id || '').localeCompare(a[1].s?.id || '');
+    });
+    for (const [key, g] of ordered) {
+      if (!g.list.length) continue;
+      const head = document.createElement('tr');
+      if (g.s) {
+        const s = g.s;
+        head.innerHTML = `<td colspan="5" class="sess-head">
+          <span class="badge ${s.ignored ? 'b-none' : 'b-run'}">${s.ignored ? '场次·已忽略总结' : '场次'}</span>
+          <b>${App.esc(g.room + ' · ' + (s.title || s.id))}</b>
+          <span class="mut">${s.start.slice(5, 16)}–${(s.end_est || '').slice(11, 16)} · ${s.segment_count} 段</span>
+          <span style="margin-left:auto"></span>
+          <button class="btn ghost btn-xs" onclick="toggleIgnore('${g.room}','${s.id}',${!!s.ignored})">${s.ignored ? '恢复总结' : '忽略总结'}</button>
+          <a class="btn ghost btn-xs" href="/summaries/${g.room}/${s.id}.summary.md">场级总结</a>
+        </td>`;
+      } else {
+        head.innerHTML = `<td colspan="5" class="mut center">未归类片段（运行 python session.py 后自动聚合）</td>`;
+      }
+      rows.appendChild(head);
+      for (const r of g.list) {
+        const tr = document.createElement('tr');
+        tr.innerHTML = rowHtml(r);
+        rows.appendChild(tr);
+      }
+    }
+    if (!rows.children.length) rows.innerHTML = '<tr><td colspan="5" class="mut center">无匹配片段</td></tr>';
+  }
+  App.q('#f-room').onchange = render; App.q('#f-session').onchange = render;
+  App.q('#f-status').onchange = render; App.q('#f-q').oninput = render;
   render();
 };
 </script>

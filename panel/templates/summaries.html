@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 {% block title %}总结库{% endblock %}
 {% block page %}summaries{% endblock %}
+{% block topbar_extra %}<span class="sub">按场次汇总每场直播的核心内容与结论</span>{% endblock %}
 {% block content %}
 <div class="toolbar">
   <input id="q" placeholder="搜索房间/文件…" value="{{ q }}">
@@ -13,6 +14,7 @@
 <td>{{ r.date }}</td><td>{{ r.room }}</td>
 <td>{% if r.kind == 'session' %}<span class="badge b-run">场次</span> <b>{{ r.title or r.base }}</b>
 <span class="mut">{{ r.time_range }} · {{ r.segment_count }}段</span>
+{% if r.ignored %}<span class="badge b-none">已忽略</span>{% endif %}
 {% if r.one_liner %}<div class="mut" style="margin-top:3px">{{ r.one_liner }}</div>{% endif %}
 {% else %}{{ r.video }}{% endif %}</td>
 <td><a class="btn ghost" href="/summaries/{{ r.room }}/{{ r.base }}.summary.md">阅读</a>

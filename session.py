@@ -172,9 +172,11 @@ def build_room(room: str, gap_min: float) -> dict:
             sessions[lo]["fingerprint"] = fingerprint([s["name"] for s in sessions[lo]["segments"] if not s.get("archived")])
             sessions[lo]["closed"] = sessions[lo]["closed"] and sessions[hi]["closed"]
             del sessions[hi]
-    # 标题覆盖
+    # 标题覆盖 + 忽略标记
+    ignored_ids = set(ov.get("ignored", []))
     for s in sessions:
         s["title"] = ov.get("titles", {}).get(s["id"], "")
+        s["ignored"] = s["id"] in ignored_ids
     old = None
     cache = sessions_file(room)
     if cache.exists():
@@ -289,6 +291,9 @@ def gen_session_summary(session: dict, key: str, force: bool) -> bool:
     if state == "ok" and not force:
         print(f"[skip] {p.name} 指纹一致", flush=True)
         return True
+    if session.get("ignored") and not force:
+        print(f"[skip] 场次 {session['id']} 已标记忽略总结", flush=True)
+        return True
     if not session["closed"] and not force:
         print(f"[skip] 场次 {session['id']} 未关闭（直播中），跳过", flush=True)
         return True
@@ -353,6 +358,8 @@ def main():
                     help="生成场级总结（可指定场次ID；缺省=该房间全部已关闭且缺失/过期的）")
     ap.add_argument("--force", action="store_true", help="强制重新生成（忽略指纹/关闭状态）")
     ap.add_argument("--title", nargs=3, metavar=("ROOM", "SESSION_ID", "TITLE"))
+    ap.add_argument("--ignore", nargs=2, metavar=("ROOM", "SESSION_ID"),
+                    help="切换某场次的「忽略场级总结」标记（幂等）")
     ap.add_argument("--merge", nargs=3, metavar=("ROOM", "ID_A", "ID_B"))
     ap.add_argument("--split", nargs=3, metavar=("ROOM", "SESSION_ID", "SEGMENT_NAME"))
     a = ap.parse_args()
@@ -363,6 +370,20 @@ def main():
         ov.setdefault("titles", {})[sid] = title
         save_json(room, "overrides.json", ov)
         print(f"[done] 已命名 {sid} = {title}（重扫后生效）")
+        build_room(room, a.gap)
+        return
+    if a.ignore:
+        room, sid = a.ignore
+        ov = load_overrides(room)
+        lst = list(ov.get("ignored", []))
+        if sid in lst:
+            lst.remove(sid)
+            print(f"[done] 已恢复场级总结: {sid}")
+        else:
+            lst.append(sid)
+            print(f"[done] 已忽略场级总结: {sid}")
+        ov["ignored"] = lst
+        save_json(room, "overrides.json", ov)
         build_room(room, a.gap)
         return
     if a.merge:
