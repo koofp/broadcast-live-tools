@@ -68,12 +68,14 @@ App.pageInit.dashboard = async function(){
     const tr  = files.filter(f=>!f.srt && !f.summary && !f.is_current).length;
     const su  = files.filter(f=> f.srt && !f.summary && !f.is_current).length;
     const done= files.filter(f=> f.summary).length;
-    const set=(id,v,work)=>{const el=document.getElementById(id);if(!el)return;
-      el.textContent=v; const st=el.closest('.fstep');
-      if(st){st.classList.toggle('has-work', work); st.classList.toggle('is-done', !work && v>0);}};
-    set('f-tr', tr? tr+' 段待转写':'无积压', tr>0);
-    set('f-sum', su? su+' 段待总结':(tr? '等转写完成':'无积压'), su>0);
-    set('f-done', done+' 份总结', false);
+    const set=(id,label,work,isDone)=>{const el=document.getElementById(id);if(!el)return;
+      el.textContent=label; const st=el.closest('.fstep');
+      if(st){st.classList.toggle('has-work', !!work); st.classList.toggle('is-done', !!isDone);}};
+    set('f-tr',  tr? tr+' 段待转写':'无积压', tr>0, false);
+    set('f-sum', su? su+' 段待总结':(tr? '等转写完成':'无积压'), su>0, false);
+    set('f-done', done? done+' 份总结':'暂无', false, done>0);
+  } else {
+    ['f-tr','f-sum','f-done'].forEach(id=>{const el=document.getElementById(id); if(el) el.textContent='获取失败';});
   }
 };
 </script>

@@ -34,12 +34,12 @@ App.pageInit.recording = async function(){
       const el=document.createElement('div'); el.className='card roomcard';
       el.innerHTML=`<div class="k">房间 ${r.room}</div>
         <div class="v sm"><span class="${liveCls}">${liveTxt}</span> · ${r.online!=null?r.online+'人':''}</div>
-        <div class="hint">${r.title}</div>
+        <div class="hint">${App.esc(r.title)}</div>
         <div class="hint">分段 ${r.segments} 个 · 共 ${r.total_gb}GB · 最新 ${r.newest_age_min??'-'} 分钟前</div>
         ${cur}${conf}
         <div class="row-actions">
           <a class="btn ghost" href="https://live.bilibili.com/${r.room}" target="_blank">直播间↗</a>
-          <a class="btn ghost" href="/segments?room=${r.room}">分段</a>
+          <a class="btn ghost" href="/segments?room=${encodeURIComponent(r.room)}">分段</a>
           ${r.configured?`<button class="btn danger" onclick="removeRoom(${r.room})">移除</button>`
                         :`<button class="btn" onclick="addRoom(${r.room})">加入录制</button>`}
         </div>`;

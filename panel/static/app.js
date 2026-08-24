@@ -42,7 +42,7 @@ window.App = (() => {
   async function viewSum(room, name) {
     const d = await fetchJSON(`/api/summary?room=${encodeURIComponent(room)}&name=${encodeURIComponent(name)}`);
     const v = q('#dlg-body') || q('#sumview');
-    v.innerHTML = (d && d.md ? d.md : '(无内容)').replace(/\n/g, '<br>');
+    v.innerHTML = (d && d.html ? d.html : '(无内容)');   // 用服务端 render_md 转义后的 HTML，防 AI 输出注入
     if (q('#dlg')) { q('#dlg-title').textContent = name; q('#dlg').showModal(); }
   }
   async function viewSrt(room, name) {

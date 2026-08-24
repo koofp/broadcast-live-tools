@@ -25,7 +25,8 @@
 App.pageInit.segments = async function(){
   // 深链支持：/segments?room=xxx&status=none&q=关键字（仪表盘流程条/录制卡入口）
   const usp = new URLSearchParams(location.search);
-  if (usp.get('room'))   App.q('#f-room').value   = usp.get('room');
+  if (usp.get('room'))   { const sel=App.q('#f-room'); sel.value=usp.get('room');
+                           if(sel.value!==usp.get('room')) sel.value=''; }  // 非法房间号回退"全部"
   if (usp.get('status')) App.q('#f-status').value = usp.get('status');
   if (usp.get('q'))      App.q('#f-q').value      = usp.get('q');
   const files = await App.fetchJSON('/api/files'); if(!files) return;

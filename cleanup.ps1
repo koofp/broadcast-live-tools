@@ -77,7 +77,8 @@ try {
             $srtOk = (Test-Path $srt) -and ((Get-Item $srt).Length -gt 1KB)
             $isPlaceholder = $false
             if (Test-Path $srt) {
-                $isPlaceholder = ((Get-Content $srt -Raw -ErrorAction SilentlyContinue) -match '\[无语音内容\]')
+                # -Encoding UTF8：WinPS 默认 GBK 读无 BOM 文件，占位符检测曾永远为 False（实测踩坑）
+                $isPlaceholder = ((Get-Content $srt -Raw -Encoding UTF8 -ErrorAction SilentlyContinue) -match '\[无语音内容\]')
             }
             $processed = (Test-Path $sum) -and ($srtOk -or $isPlaceholder)
             $cond = $processed -and ($_.Length -ge 1MB) -and `

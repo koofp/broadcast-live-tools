@@ -86,7 +86,8 @@ try {
             $toTranscribe += $v
             continue
         }
-        if ((Get-Content $srt -Raw -ErrorAction SilentlyContinue) -match '\[无语音内容\]') {
+        # -Encoding UTF8 必须：WinPS5.1 默认按 GBK 读无 BOM 文件，占位符曾永远匹配不上（实测踩坑）
+        if ((Get-Content $srt -Raw -Encoding UTF8 -ErrorAction SilentlyContinue) -match '\[无语音内容\]') {
             Log "[skip] $name 占位srt(无语音)，跳过总结"
             [IO.File]::WriteAllText($sum, "（该分段无语音内容，未生成总结）", (New-Object Text.UTF8Encoding($false)))
             continue
@@ -108,7 +109,7 @@ try {
             if ((Test-Path $srt) -and ((Get-Item $srt).Length -gt 0)) {
                 $sum = [IO.Path]::ChangeExtension($v, '.summary.md')
                 if (Test-Path $sum) { continue }
-                if ((Get-Content $srt -Raw -ErrorAction SilentlyContinue) -match '\[无语音内容\]') {
+                if ((Get-Content $srt -Raw -Encoding UTF8 -ErrorAction SilentlyContinue) -match '\[无语音内容\]') {
                     [IO.File]::WriteAllText($sum, "（该分段无语音内容，未生成总结）", (New-Object Text.UTF8Encoding($false)))
                     Log "[skip] $name 占位srt(无语音)，跳过总结"
                     continue
