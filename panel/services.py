@@ -307,6 +307,11 @@ def find_srt(room: str, name: str) -> Path | None:
     return _resolve_out(room, name, ".srt")
 
 
+def _first_section_line(t: str, name: str) -> str:
+    m = re.search(rf"##\s*{name}[^\n]*\n+(.+)", t)
+    return m.group(1).strip().splitlines()[0][:100] if m and m.group(1).strip() else ""
+
+
 def summaries_list(query: str = "") -> list:
     out = []
     items = []
@@ -316,7 +321,6 @@ def summaries_list(query: str = "") -> list:
     for s in sorted(VIDEOS.glob("*/_sessions/*.summary.md"),
                     key=lambda p: p.stat().st_mtime, reverse=True):
         items.append((s, "session"))
-    items.sort(key=lambda t: t[0].stat().st_mtime, reverse=True)
     for s, kind in items:
         base = s.name.replace(".summary.md", "")
         # 场次总结在 Videos/<房间>/_sessions/ 下：房间号取上级目录（parent 是 _sessions）
@@ -324,10 +328,32 @@ def summaries_list(query: str = "") -> list:
         item = {"room": room, "video": base + ".mp4",
                 "base": base,
                 "name": s.name, "kind": kind,
-                "date": time.strftime("%Y-%m-%d %H:%M", time.localtime(s.stat().st_mtime))}
+                "date": time.strftime("%Y-%m-%d %H:%M", time.localtime(s.stat().st_mtime)),
+                "title": "", "time_range": "", "segment_count": None, "one_liner": ""}
+        if kind == "session":
+            # 场次条目增强：标题/时间范围/段数（sessions.json）+ 一句话（summary 文件）
+            try:
+                data = json.loads((VIDEOS / room / "_sessions" / "sessions.json")
+                                  .read_text(encoding="utf-8"))
+                sess = next((x for x in data.get("sessions", []) if x["id"] == base), {})
+                item["title"] = sess.get("title", "")
+                item["time_range"] = (f"{sess.get('start','')[5:16]}–"
+                                      f"{sess.get('end_est','')[11:16]}")
+                item["segment_count"] = sess.get("segment_count")
+            except Exception:
+                pass
+            try:
+                item["one_liner"] = _first_section_line(
+                    s.read_text(encoding="utf-8", errors="ignore"), "一句话总结")
+            except Exception:
+                pass
         if query and query.lower() not in json.dumps(item, ensure_ascii=False).lower():
             continue
         out.append(item)
+    # 场次排前排（产品定案：场级负责浏览，段级负责定位）
+    out.sort(key=lambda r: (0 if r["kind"] == "session" else 1,
+                            0 if r["kind"] == "session" else -time.mktime(
+                                time.strptime(r["date"], "%Y-%m-%d %H:%M"))))
     return out
 
 

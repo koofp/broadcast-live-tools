@@ -57,8 +57,13 @@ def one_liner(sm_path: Path) -> str | None:
     return None
 
 
+def _md_section(t: str, name: str) -> str:
+    m = re.search(rf"##\s*{name}[^\n]*\n+(.*?)(?=\n## |\Z)", t, re.S)
+    return m.group(1).strip() if m else ""
+
+
 def session_lines(room: Path) -> list:
-    """场次视图（读 session.py 的缓存；无则跳过）。"""
+    """场次视图（读 session.py 的缓存与场级总结，含实际内容；无则跳过）。"""
     sf = room / "_sessions" / "sessions.json"
     if not sf.exists():
         return []
@@ -66,18 +71,34 @@ def session_lines(room: Path) -> list:
         data = json.loads(sf.read_text(encoding="utf-8"))
     except Exception:
         return []
-    out = [f"### 房间 {room.name} · 场次", "",
-           "| 场次ID | 时间范围 | 段数 | 总结 | 标题 |", "|---|---|---|---|---|"]
-    for s in data.get("sessions", []):
+    sessions = data.get("sessions", [])
+    if not sessions:
+        return []
+    out = [f"### 房间 {room.name}"]
+    for s in sessions:
         sp = room / "_sessions" / f"{s['id']}.summary.md"
-        if sp.exists():
-            head = sp.read_text(encoding="utf-8", errors="ignore")[:300]
-            m = re.search(r"session-fingerprint:\s*([^\s-]+)", head)
-            st = "✅" if (m and m.group(1) == s.get("fingerprint")) else "⚠️过期"
-        else:
-            st = "—"
-        out.append(f"| {s['id']} | {s['start'][5:16]} ~ {s['end_est'][11:16]} | "
-                   f"{s['segment_count']} | {st} | {s.get('title','')} |")
+        title = s.get("title") or ""
+        head = (f"#### {s['start'][:10]} {title} {s['start'][11:16]}–{s['end_est'][11:16]} · "
+                f"{s['segment_count']} 段").rstrip()
+        out += ["", head]
+        if not sp.exists():
+            out.append("（尚无场级总结——`python session.py --summarize "
+                       f"{room.name} {s['id']}` 生成）")
+            continue
+        txt = sp.read_text(encoding="utf-8", errors="ignore")
+        m = re.search(r"session-fingerprint:\s*([^\s-]+)", txt[:300])
+        stale = not (m and m.group(1) == s.get("fingerprint"))
+        one = _md_section(txt, "一句话总结")
+        pts = _md_section(txt, "关键要点")
+        hl = _md_section(txt, "高光时刻")
+        if one:
+            out += ["", f"**一句话**：{one}"]
+        if pts:
+            out += ["", "**要点**："] + [f"- {ln.strip()}" for ln in pts.splitlines() if ln.strip()]
+        if hl:
+            out += ["", "**高光**："] + [f"- {ln.strip()}" for ln in hl.splitlines() if ln.strip()]
+        out += ["", f"完整场级总结：`_sessions/{s['id']}.summary.md`"
+                + ("（⚠️指纹过期，建议重跑 --summarize）" if stale else "")]
     out.append("")
     return out
 
@@ -135,12 +156,15 @@ def main(out_file="REPORT.md"):
                      f"{r.get('字幕条数','n/a')} | {nov} | {r.get('总结','-')} | {(r.get('一句话') or '')[:50]} |")
 
     done = sum(1 for r in rows if r["总结"] == "有")
-    # 场次视图（有缓存的房间才输出）
+    # 场次视图前置为主视图（含实际总结内容）；逐段平铺表退居其后作为明细
+    session_blocks = []
     for room in sorted(VIDEOS.iterdir()):
         if room.is_dir():
             out_lines = session_lines(room)
             if out_lines:
-                lines += ["", "## 场次视图"] + out_lines
+                session_blocks += ["", "## 场次视图（整场汇报）"] + out_lines
+    if session_blocks:
+        lines = lines[:4] + session_blocks + ["", "---", "", "## 逐段明细"] + lines[4:]
     out = ROOT / out_file
     out.write_text("\n".join(lines), encoding="utf-8")
     print(f"[done] {len(rows)} 段（含总结 {done}）→ {out}")

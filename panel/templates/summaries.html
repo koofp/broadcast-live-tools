@@ -9,9 +9,12 @@
 <table class="tbl"><thead><tr><th>日期</th><th>房间</th><th>视频</th><th>操作</th></tr></thead>
 <tbody id="rows">
 {% for r in rows %}
-<tr data-key="{{ r.room }} {{ r.video |lower }}{% if r.kind == 'session' %} 场次{% endif %}">
+<tr data-key="{{ r.room }} {{ r.video |lower }} {{ r.title }} {{ r.one_liner }}{% if r.kind == 'session' %} 场次{% endif %}">
 <td>{{ r.date }}</td><td>{{ r.room }}</td>
-<td>{% if r.kind == 'session' %}<span class="badge b-run">场次</span> {% endif %}{{ r.video }}</td>
+<td>{% if r.kind == 'session' %}<span class="badge b-run">场次</span> <b>{{ r.title or r.base }}</b>
+<span class="mut">{{ r.time_range }} · {{ r.segment_count }}段</span>
+{% if r.one_liner %}<div class="mut" style="margin-top:3px">{{ r.one_liner }}</div>{% endif %}
+{% else %}{{ r.video }}{% endif %}</td>
 <td><a class="btn ghost" href="/summaries/{{ r.room }}/{{ r.base }}.summary.md">阅读</a>
 {% if r.kind != 'session' %}<a class="btn ghost" href="/srt/{{ r.room }}/{{ r.base }}.srt">字幕</a>{% endif %}</td></tr>
 {% else %}<tr><td colspan="4" class="mut center">还没有任何总结。先到流水线页处理分段。</td></tr>{% endfor %}
