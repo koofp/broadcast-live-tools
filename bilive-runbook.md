@@ -217,6 +217,35 @@ Remove-Item '.\bilive-docker\Videos\_selftest' -Recurse -Force
 - `python … | Select-Object -First N` 会掐杀上游进程（exit 变 -1）→ 看全量输出别截断
 - 每次工具调用是独立进程，`$env:` 注入不跨调用存活 → 注入与执行放同一条命令
 
+## 5.99 场次聚合与整场总结（2026-08-24 上线）
+
+**概念**：把 30 分钟碎片段聚合成"场次"（一场直播），并生成场级二级总结——
+把"录音笔"升级为"会议纪要"。三视角子代理研讨定案：sessions 是**派生视图**
+（确定性聚类，幂等重算），sessions.json 只是缓存，不是持久事实。
+
+**使用**：
+```powershell
+python session.py                                # 扫描全部房间，打印场次表并写缓存
+python session.py --summarize 8139918            # 该房间全部"已关闭且缺失/过期"场次的 LLM 场级总结
+python session.py --summarize 8139918 20260823_095436   # 指定场次
+python session.py --title 8139918 20260823_095436 "TI决赛日"     # 命名（面板/报告显示用）
+python session.py --merge 8139918 <ID_A> <ID_B>  # 误切分时手动合并
+python session.py --split 8139918 <ID> <段文件名> # 在该段处强制切分
+```
+
+**机制**：
+- 聚类阈值 50 分钟（相邻段开始时间差；真实数据校准：场内最大抖动 37min）
+- 存储：`Videos/<房间>/_sessions/sessions.json` + `<场次ID>.summary.md`
+- 场级总结头部带段指纹（`段数:名单哈希`）——新增/删除段后自动判 stale，重跑即刷新
+- 触发条件：场次已关闭（末段>60min）且 ≥3 段；LLM 调用复用 429 长退避与原子写
+- 段被 cleanup 归档后，场次元数据标 archived 保留（场级总结不因清理失效）
+- 纠错持久化于 `_sessions/overrides.json`（boundaries/merged/titles），重算后仍生效
+- 面板总结库：场次条目带徽章，阅读页含段级附录清单
+
+**实测**（2026-08-24，TI 数据）：08-22 场 21 段（含 3 个旧命名段、37min 抖动正确合并）、
+08-23 场 25 段（09:54–22:23 约 12.5 小时），两场真实 API 50 秒出稿，
+时间线/要点/金句质量良好（Spirit 三冠叙事完整）。
+
 ## 5. 扩展资产
 
 ## 5.7 运维自动化套件（2026-08-22 上线，经子代理对抗评审）

@@ -108,7 +108,8 @@ def build_session(room: str, segs) -> dict:
 
 
 def merge_archived(old: dict | None, new_sessions: list):
-    """旧缓存里有、本次扫描已消失的段 → 以 archived 身份并回其原场次（元数据不蒸发）。"""
+    """旧缓存里有、本次扫描已消失的段 → 以 archived 身份并回其原场次（元数据不蒸发）。
+    注意无条件回填（含已带 archived 标记的）：否则第二次重算时归档元数据会蒸发（验收缺陷#1）。"""
     if not old:
         return
     by_id = {s["id"]: s for s in new_sessions}
@@ -118,11 +119,12 @@ def merge_archived(old: dict | None, new_sessions: list):
             continue
         known = {seg["name"] for seg in ns["segments"]}
         for seg in os_.get("segments", []):
-            if seg["name"] not in known and not seg.get("archived"):
+            if seg["name"] not in known:
                 a = dict(seg)
                 a["archived"] = True
                 ns["segments"].append(a)
         ns["segments"].sort(key=lambda s: s["start"])
+        ns["segment_count"] = len(ns["segments"])   # 口径=含归档总数（与附录行数一致）
         ns["archived_count"] = sum(1 for s in ns["segments"] if s.get("archived"))
 
 
@@ -162,6 +164,11 @@ def build_room(room: str, gap_min: float) -> dict:
             sessions[lo]["segments"].extend(sessions[hi]["segments"])
             sessions[lo]["segments"].sort(key=lambda s: s["start"])
             sessions[lo]["segment_count"] = len(sessions[lo]["segments"])
+            # 重算结束时间（验收缺陷#2：合并后 end_est 沿用旧值会污染时长）
+            last_start = datetime.strptime(sessions[lo]["segments"][-1]["start"],
+                                           "%Y-%m-%d %H:%M:%S")
+            sessions[lo]["end_est"] = (last_start + timedelta(minutes=SEGMENT_EST_MIN)).strftime(
+                "%Y-%m-%d %H:%M:%S")
             sessions[lo]["fingerprint"] = fingerprint([s["name"] for s in sessions[lo]["segments"] if not s.get("archived")])
             sessions[lo]["closed"] = sessions[lo]["closed"] and sessions[hi]["closed"]
             del sessions[hi]
@@ -368,6 +375,11 @@ def main():
         return
     if a.split:
         room, sid, seg = a.split
+        data = build_room(room, a.gap)   # 先重算，基于最新场次校验
+        target = next((s for s in data["sessions"] if s["id"] == sid), None)
+        if target is None or seg not in {x["name"] for x in target["segments"]}:
+            print(f"[fail] 段 {seg} 不属于场次 {sid}（验收缺陷#4：参数校验）")
+            sys.exit(1)
         ov = load_overrides(room)
         ov.setdefault("boundaries", []).append(seg)
         save_json(room, "overrides.json", ov)
