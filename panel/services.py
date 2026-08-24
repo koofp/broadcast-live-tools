@@ -160,7 +160,7 @@ def files() -> list:
                 "size_gb": round(m.stat().st_size / 2**30, 2),
                 "mtime": time.strftime("%m-%d %H:%M", time.localtime(m.stat().st_mtime)),
                 "srt": has_srt, "summary": has_sum,
-                "status_label": ("录制中" if (time.time() - m.stat().st_mtime) < 600 else label)
+                "status_label": ("最近写入" if (time.time() - m.stat().st_mtime) < 600 else label)
                                  if not has_sum else label,
                 "status_class": ("b-flv" if (time.time() - m.stat().st_mtime) < 600 and m.suffix==".flv" else cls)
                                  if not has_sum else cls,

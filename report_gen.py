@@ -64,7 +64,9 @@ def main(out_file="REPORT.md"):
         for ln in DELETED_LOG.read_text(encoding="utf-8", errors="ignore").splitlines():
             m = re.search(r"DELETED\t(.+)$", ln)
             if m:
-                archived.add(Path(m.group(1)).name)
+                p = Path(m.group(1))
+                # 修复：按「房间/文件名」匹配（原只取文件名，跨房间同名会互相误标且丢失溯源）
+                archived.add(f"{p.parent.name}/{p.name}")
 
     rows = []
     for room in sorted(VIDEOS.iterdir()):
@@ -77,7 +79,8 @@ def main(out_file="REPORT.md"):
             stem = vid.with_suffix("")
             srt = stem.with_suffix(".srt")
             summ = stem.with_suffix(".summary.md")
-            row = {"room": room.name, "video": vid.name, "archived": vid.name in archived}
+            row = {"room": room.name, "video": vid.name,
+                   "archived": f"{room.name}/{vid.name}" in archived}
             if srt.exists():
                 try:
                     info = parse_srt(srt)

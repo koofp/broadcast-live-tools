@@ -125,6 +125,22 @@ def reconcile_retry() -> int:
     return len(kept)
 
 
+def pick_prompt(srt_path: Path, global_tpl: str) -> str:
+    """按房间选提示词：prompt.<房间号>.txt > prompt.txt > 内置默认。
+    房间号取 srt 所在目录名（Videos/<room>/）。让不同类型直播间
+    （游戏/财经/聊天）使用各自的术语纠错倾向，互不干扰。"""
+    room = srt_path.parent.name
+    if room.isdigit():
+        rp = Path(__file__).resolve().parent / f"prompt.{room}.txt"
+        if rp.exists():
+            tpl = rp.read_text(encoding="utf-8")
+            if "{srt}" in tpl:
+                print(f"[prompt] 使用房间专属提示词 {rp.name}", flush=True)
+                return tpl
+            print(f"[warn] {rp.name} 缺 {{srt}} 占位符，回退全局提示词", flush=True)
+    return global_tpl
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("srts", nargs="+")
@@ -147,7 +163,8 @@ def main():
     ok = 0
     for p in a.srts:
         try:
-            if summarize(Path(p), tpl, key):
+            sp = Path(p)
+            if summarize(sp, pick_prompt(sp, tpl), key):
                 ok += 1
                 time.sleep(5)  # 批量调用间隔
         except Exception as e:

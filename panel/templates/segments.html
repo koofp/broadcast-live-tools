@@ -42,7 +42,7 @@ App.pageInit.segments = async function(){
           ${r.summary?`<button class="btn ghost" onclick="App.viewSum('${r.room}','${r.name}')">总结</button>
                        <button class="btn ghost" onclick="App.viewSrt('${r.room}','${r.name}')">字幕</button>`:''}
           ${canProc?`<button class="btn" onclick="App.procOne('${r.name}')">${r.srt?'补总结':'转写+总结'}</button>`
-                   :(r.is_current?'<span class="mut">录制中…</span>':'')}
+                   :(r.is_current?'<span class="mut">最近写入…</span>':'')}
         </td>`;
       rows.appendChild(tr);
     }

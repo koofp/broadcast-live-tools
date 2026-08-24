@@ -15,8 +15,9 @@ node_modules/
 run.lock
 .status_cache.json
 .durations.json
-bilive-docker/settings.toml.bak*
 panel/queue.json
+bilive-docker/settings.toml
+bilive-docker/settings.toml.bak*
 panel_err.log
 retry.txt
 start_batch.cmd
