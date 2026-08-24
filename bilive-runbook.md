@@ -1,6 +1,11 @@
 # bilive 排障与部署 Runbook（v3 · 2026-08-23 终版）
 
-> 更新：2026-08-23 v3。全链路无人值守闭环验证通过。
+> 更新：2026-08-24。全链路无人值守闭环验证通过。
+
+> 📚 **文档地图**：项目入口看 [README.md](README.md)（架构/规范/路线图）；
+> 变更史看 [CHANGELOG.md](CHANGELOG.md)（新变更记那里，本手册只保留当前状态）；
+> 本文档 = **按症状排障的权威手册** + 配置速查 + 坑清单。
+> ⚠️ 本手册小节号按追加时序生长（5.x 段落非连续），用 §编号 引用时以标题文字为准。
 
 ## 快速导航
 
@@ -262,20 +267,26 @@ docker cp _summarize.py bilive_docker:/tmp/sum.py && docker exec bilive_docker p
 
 ```
 broadcast-live-tools/
-├── bilive-docker/            # 运行数据盘（勿整体删）：Videos 录像成果 / settings.toml 房间配置 / compose 编排
-├── bilive/                   # 上游开源代码（只读，独立 git）
-├── panel/                    # Web 面板 v3（main.py 路由 / services.py 逻辑 / templates / static）
-├── panel.py                  # 面板薄入口（计划任务 bilive-panel 指向此文件）
-├── process_all.ps1           # 批量转写+总结（计划任务 bilive-pipeline 每30分钟）
-├── cleanup.ps1               # 归档清理（计划任务 bilive-cleanup 每2小时，安全条件内建）
-├── status.ps1                # 监控：容器/DNS劫持/磁盘/积压
-├── transcribe_host.py        # faster-whisper small 转写（宿主，2.7x 实时）
-├── summarize_host.py         # OpenRouter ox-alpha 总结（429 长退避，占位跳过）
-├── qa_check.py               # 质量验收（幻觉/重复/巨块/编码/五段结构/时间戳）
-├── report_gen.py             # 全量复盘 REPORT.md
-├── bilive-runbook.md         # 本文档（唯一权威排障手册）
-├── start_batch.cmd           # 带 key 的批次启动器（gitignored，含 key 勿外传）
-└── .gitignore                # Videos/logs/models/retry/run.lock/start_batch.cmd 等
+├── README.md                  # 项目入口：架构图/日常三件事/工程规范/路线图
+├── CHANGELOG.md               # 变更史（新变更记这里）
+├── bilive-docker/             # 运行数据盘（勿整体删）：Videos 录像成果 / settings.toml(不入库) / compose 编排
+├── bilive/                    # 上游开源代码（只读，独立 git）
+├── panel/                     # Web 面板 v3.2（main.py 路由 / services.py 逻辑 / templates / static）
+├── panel.py                   # 面板薄入口（端口占用守卫：已有实例则 exit 0）
+├── 启动面板.cmd               # 桌面一键启动（检测 9090→拉起→开浏览器）；计划任务 bilive-panel 已禁用
+├── process_all.ps1            # 两阶段批处理：规划→批量转写(权重单次加载)→批量总结（计划任务每30分钟）
+├── cleanup.ps1                # 归档清理 v3（计划任务 bilive-cleanup 每2小时；占位段已放行，mp4≥1MB 护栏）
+├── status.ps1                 # 监控：容器/DNS劫持/磁盘/积压；红牌落盘 alert.log（30分钟节流）
+├── verify.ps1                 # ⚡一键回归门禁（改码后必跑）：py编译/ps解析/BOM/产物/toml/面板冒烟
+├── transcribe_host.py         # faster-whisper small 转写（宿主，2.7x 实时；支持多视频单次加载）
+├── summarize_host.py          # OpenRouter ox-alpha 总结（429 长退避；按房间自动选提示词；retry对账）
+├── prompt.txt                 # 全局总结提示词（DOTA2 游戏向）
+├── prompt.1883948055.txt      # 房间专属提示词示例（财经向；可按房间号复制扩展）
+├── qa_check.py                # 质量验收（幻觉/重复/巨块/编码/五段结构/时间戳）
+├── report_gen.py              # 全量复盘 REPORT.md（含已归档分段溯源）
+├── bilive-runbook.md          # 本文档（权威排障手册）
+├── start_batch.cmd            # 带 key 的批次启动器（gitignored，含 key 勿外传）
+└── .gitignore                 # Videos/logs/models/settings.toml/retry/run.lock/queue.json 等
 ```
 
 ## 11. 已注册的计划任务
@@ -292,11 +303,14 @@ broadcast-live-tools/
 
 ```
 继续 bilive 直播录制系统（工作区 D:\CodeIDE\01-Code_item\01-Ai-item\ai-brower-tool\broadcast-live-tools）。
-先读 bilive-runbook.md（含快速导航、架构、路径规范、文件清单、计划任务），
+先读 README.md（架构/工程规范/路线图）和 bilive-runbook.md（排障权威：快速导航、根因定论、坑清单），
 再看 REPORT.md 和 status.ps1 的当前状态，然后告诉我当前系统健康度和待办事项。
+注意事项：面板是手动启动的（桌面「启动面板」图标）；改任何代码后必须跑 .\verify.ps1；
+本仓库永不 push 公网。
 ```
 
 如需继续推进某项任务，追加一句（例如）：
 - 「继续优化面板 UI/逻辑」→ 参考 panel/ 下的 main.py、services.py、templates、static
 - 「继续排查录制/转写问题」→ 参考 runbook §0.5 根因定论、§5.8 已知修复
 - 「继续做归档/复盘」→ 参考 cleanup.ps1、report_gen.py
+- 「做路线图里的 P0 项」→ README 路线图（通知渠道 / 元数据备份 / 补测试盲区）
