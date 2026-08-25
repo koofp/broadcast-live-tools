@@ -593,6 +593,16 @@ def rooms_from_settings() -> list[dict]:
 
 _live_cache: dict = {"ts": 0.0, "data": {}}
 
+# B站 API 专用 opener：强制直连，永不走系统/环境代理
+# （评审实锤：urlopen 会把首次请求时的系统代理缓存进模块级 opener——
+#   Clash 崩溃后死端口 7897 被缓存，面板所有 B站请求永久 ConnectionRefused）
+_DIRECT_OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+
+
+def _bili_get(url: str, timeout: int = 8):
+    req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+    return _DIRECT_OPENER.open(req, timeout=timeout)
+
 
 def live_status(room_ids: list[int]) -> dict:
     """B站房间直播状态，60s 缓存。失败容忍→unknown"""
@@ -606,7 +616,7 @@ def live_status(room_ids: list[int]) -> dict:
             req = urllib.request.Request(
                 f"https://api.live.bilibili.com/room/v1/Room/get_info?room_id={rid}",
                 headers={"User-Agent": "Mozilla/5.0"})
-            with urllib.request.urlopen(req, timeout=6) as r:
+            with _DIRECT_OPENER.open(req, timeout=6) as r:
                 d = json.loads(r.read().decode("utf-8", "ignore")).get("data", {})
             entry.update({"live_status": d.get("live_status"),
                           "title": d.get("title", ""),
@@ -688,7 +698,7 @@ def validate_room(room_id: int) -> dict:
         req = urllib.request.Request(
             f"https://api.live.bilibili.com/room/v1/Room/get_info?room_id={room_id}",
             headers={"User-Agent": "Mozilla/5.0"})
-        with urllib.request.urlopen(req, timeout=8) as r:
+        with _DIRECT_OPENER.open(req, timeout=8) as r:
             d = json.loads(r.read().decode("utf-8", "ignore"))
         if d.get("code") == 0 and d.get("data"):
             return {"valid": True, "title": d["data"].get("title", ""),
@@ -698,10 +708,16 @@ def validate_room(room_id: int) -> dict:
         return {"valid": False, "reason": repr(e)[:120]}
 
 def get_api_key() -> str:
-    """env → 用户注册表兜底（解决计划任务/不同父进程差异）"""
+    """API key 三级回退：环境变量 → api_key.txt 文件 → 注册表。
+    文件方式解决"新进程/旧会话读不到环境变量"的问题。"""
     k = os.environ.get("OPENROUTER_API_KEY", "").strip()
     if k:
         return k
+    key_file = ROOT / "api_key.txt"
+    if key_file.exists():
+        k = key_file.read_text(encoding="utf-8").strip()
+        if k:
+            return k
     try:
         out = subprocess.run(["reg", "query", r"HKCU\Environment", "/v", "OPENROUTER_API_KEY"],
                              capture_output=True, text=True, timeout=8).stdout

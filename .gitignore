@@ -22,3 +22,4 @@ panel_err.log
 retry.txt
 start_batch.cmd
 panel_stderr.log
+api_key.txt

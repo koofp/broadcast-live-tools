@@ -141,6 +141,20 @@ def pick_prompt(srt_path: Path, global_tpl: str) -> str:
     return global_tpl
 
 
+def get_api_key() -> str:
+    """API key 三级回退：环境变量 → api_key.txt 文件 → 空串。
+    文件方式解决"新进程/旧会话读不到环境变量"的问题。"""
+    k = os.environ.get("OPENROUTER_API_KEY", "").strip()
+    if k:
+        return k
+    key_file = Path(__file__).resolve().parent / "api_key.txt"
+    if key_file.exists():
+        k = key_file.read_text(encoding="utf-8").strip()
+        if k:
+            return k
+    return ""
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("srts", nargs="+")
@@ -150,9 +164,9 @@ def main():
     left = reconcile_retry()
     print(f"[retry] 对账后剩余 {left} 条待重试", flush=True)
 
-    key = os.environ.get("OPENROUTER_API_KEY", "").strip()
+    key = get_api_key()
     if not key:
-        print("[fatal] 未设置 OPENROUTER_API_KEY 环境变量", flush=True)
+        print("[fatal] 未找到 OPENROUTER_API_KEY（环境变量 / api_key.txt 均为空）", flush=True)
         sys.exit(1)
 
     pf = Path(a.prompt_file)
