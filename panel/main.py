@@ -352,6 +352,11 @@ async def api_rooms_remove(req: Request):
     return JSONResponse({"ok": ok, "reason": msg, "need_restart": ok})
 
 
+@app.get("/api/readiness")
+def api_readiness():
+    return services.readiness_check()
+
+
 @app.get("/api/sessions")
 def api_sessions():
     return services.sessions_index()

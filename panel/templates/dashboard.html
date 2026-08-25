@@ -23,6 +23,13 @@
 </div>
 
 <div class="card wide" style="margin-bottom:22px">
+  <div class="k">全流程就绪检查</div>
+  <div id="readiness-box" style="margin-top:8px">
+    <span class="mut">加载中…</span>
+  </div>
+</div>
+
+<div class="card wide" style="margin-bottom:22px">
   <div class="chip {% if active_file %}chip-blue{% else %}chip-green{% endif %}"><svg viewBox="0 0 16 16"><path d="M4 2l10 6-10 6V2z"/></svg></div>
   <div class="k">当前处理</div>
   <div class="v sm">{% if active_file %}<span class="live-dot"></span>{{ active_file }}{% else %}— 空闲，等待新分段{% endif %}</div>
@@ -76,6 +83,20 @@ App.pageInit.dashboard = async function(){
     set('f-done', done? done+' 份总结':'暂无', false, done>0);
   } else {
     ['f-tr','f-sum','f-done'].forEach(id=>{const el=document.getElementById(id); if(el) el.textContent='获取失败';});
+  }
+  // 就绪检查
+  const rd = await App.fetchJSON('/api/readiness');
+  const box = App.q('#readiness-box');
+  if (rd && rd.items) {
+    let html = '<table class="tbl" style="margin:0"><thead><tr><th style="width:130px">检查项</th><th>状态</th></tr></thead><tbody>';
+    for (const item of rd.items) {
+      const icon = item.ok ? '<span class="ok" style="font-weight:700">✓</span>' : '<span class="bad" style="font-weight:700">✗</span>';
+      html += `<tr><td style="padding:6px 12px">${item.name}</td><td style="padding:6px 12px">${icon} ${item.detail}</td></tr>`;
+    }
+    html += '</tbody></table>';
+    box.innerHTML = html;
+  } else {
+    box.innerHTML = '<span class="bad">就绪检查获取失败</span>';
   }
 };
 </script>

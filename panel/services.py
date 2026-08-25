@@ -388,6 +388,94 @@ def session_ignore_toggle(room: str, sid: str) -> str:
     return ((r.stdout or "") + (r.stderr or "")).strip()[-200:] or "已切换"
 
 
+def readiness_check() -> dict:
+    """全流程就绪状态：录制→转写→总结→复盘 各环节依赖项逐项确认。"""
+    import re as _re
+    items = []
+
+    # 1) 容器
+    ctn = container_status()
+    items.append({"name": "容器", "ok": ctn.startswith("Up"), "detail": ctn})
+
+    # 2) 录制任务（查 blrec API 每个配置房间的 monitor/recorder 状态）
+    cfg_rooms = [r["room_id"] for r in rooms_from_settings()]
+    task_details = []
+    tasks_ok = True
+    try:
+        req = urllib.request.Request(
+            "http://127.0.0.1:22333/api/v1/tasks/data",
+            headers={"X-API-KEY": "Bil1veLocal2026"})
+        with _DIRECT_OPENER.open(req, timeout=5) as r:
+            tasks_data = json.loads(r.read().decode("utf-8"))
+        for td in tasks_data:
+            rid = td["room_info"]["room_id"]
+            ts = td["task_status"]
+            mon = "✓" if ts["monitor_enabled"] else "✗"
+            rec = "✓" if ts["recorder_enabled"] else "✗"
+            st = ts["running_status"]
+            in_cfg = str(rid) in [str(c) for c in cfg_rooms]
+            task_details.append(f"{rid} mon{mon} rec{rec} {st}")
+            if not ts["monitor_enabled"] or not ts["recorder_enabled"]:
+                tasks_ok = False
+        # 配置了但 blrec 没加载的房间
+        loaded = [str(td["room_info"]["room_id"]) for td in tasks_data]
+        for c in cfg_rooms:
+            if str(c) not in loaded:
+                task_details.append(f"{c} ⚠ 未加载")
+                tasks_ok = False
+    except Exception:
+        tasks_ok = False
+        task_details.append("blrec API 不可达")
+    if not cfg_rooms:
+        tasks_ok = False
+        task_details.append("settings.toml 无任务")
+    items.append({"name": "录制任务", "ok": tasks_ok, "detail": "; ".join(task_details) or "无"})
+
+    # 3) 登录 cookie
+    cookie_ok = False
+    cookie_detail = "未设置"
+    if SETTINGS.exists():
+        try:
+            st = SETTINGS.read_text(encoding="utf-8-sig", errors="ignore")
+            # cookie 值内可能含转义引号 \" → 匹配整行而非 [^"]
+            m = _re.search(r'cookie\s*=\s*"(.+?)"\s*$', st, _re.MULTILINE)
+            if m and len(m.group(1)) > 10 and "SESSDATA" in m.group(1):
+                cookie_ok = True
+                cookie_detail = "已持久化（含登录态）"
+            elif m and len(m.group(1)) > 5:
+                cookie_ok = True
+                cookie_detail = f"设备 cookie（{len(m.group(1))} 字符，无登录态）"
+            elif m:
+                cookie_detail = "空串"
+        except Exception:
+            pass
+    items.append({"name": "登录 cookie", "ok": cookie_ok, "detail": cookie_detail})
+
+    # 4) API key
+    key = get_api_key()
+    key_src = "环境变量" if os.environ.get("OPENROUTER_API_KEY", "").strip() else \
+              ("api_key.txt" if (ROOT / "api_key.txt").exists() else "")
+    items.append({"name": "API key", "ok": bool(key),
+                  "detail": f"{key_src} ✓ ({len(key)} 字符)" if key else "未设置"})
+
+    # 5) 面板（自身即证明）
+    items.append({"name": "面板", "ok": True, "detail": "200 ✓"})
+
+    # 6) Clash
+    clash_running = False
+    try:
+        import subprocess as _sp
+        r = _sp.run(["tasklist", "/FI", "IMAGENAME eq verge-mihomo.exe"],
+                    capture_output=True, text=True, timeout=5)
+        clash_running = "verge-mihomo" in r.stdout
+    except Exception:
+        pass
+    items.append({"name": "Clash", "ok": not clash_running,
+                  "detail": "已退出 ✓" if not clash_running else "运行中（勿切全局模式）"})
+
+    return {"items": items, "all_ok": all(i["ok"] for i in items)}
+
+
 def summaries_list(query: str = "") -> list:
     out = []
     items = []
