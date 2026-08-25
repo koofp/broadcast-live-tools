@@ -3,6 +3,18 @@
 > 变更史。新变更记录到这里（按日期倒序），runbook 只保留"当前状态"不再堆时序日志。
 > 格式参考 Keep a Changelog；提交号可 `git show <hash>` 查看全文。
 
+## 2026-08-25 · 片段库场次分组 + 忽略总结 + 密钥三级回退 + 乱码修复
+
+- **feat(ux) `0d3f92e`**：片段库（原分段库）按场次分组渲染——组头含徽章/标题/时段/段数/
+  忽略总结按钮/场级总结链接；场次筛选下拉 + `?session=ID` 深链；导航改名"分段库→片段库"；
+  两页副标题自解释；status 后台常驻刷新线程（请求永不阻塞，二次请求 33ms）；
+  cleanup 预览 GBK 乱码修复（Console UTF8）。
+- **fix(key) `a347c5f`**：API key 三级回退（env → api_key.txt → 注册表）——解决
+  "新进程/旧会话读不到环境变量"问题；summarize_host + panel/services 统一使用。
+- **feat(session) `e8e5b29`/`9109e6e`**：场次聚合 v1 + 检查代理验收修复（详见上方条目）。
+- **fix(presentation) `273f88c`**：REPORT 场次视图前置+内联内容；总结库场次行增强。
+- **chore `261ce7a`**：清理 10 个临时诊断脚本。
+
 ## 2026-08-24 · 全链路重测通过 + selftest.ps1 固化
 
 - **test `selftest.ps1`**：§5.98 SOP 固化为一键自测（合成3个静音视频→两阶段批处理→
