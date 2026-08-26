@@ -328,6 +328,12 @@ def get_api_key() -> str:
     k = os.environ.get("OPENROUTER_API_KEY", "").strip()
     if k:
         return k
+    # api_key.txt 回退（与 summarize_host 统一）
+    key_file = Path(__file__).resolve().parent / "api_key.txt"
+    if key_file.exists():
+        k = key_file.read_text(encoding="utf-8-sig").strip().lstrip("\ufeff")
+        if k:
+            return k
     import subprocess
     try:
         out = subprocess.run(["reg", "query", r"HKCU\Environment", "/v", "OPENROUTER_API_KEY"],
