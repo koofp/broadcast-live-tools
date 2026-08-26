@@ -3,6 +3,14 @@
 > 变更史。新变更记录到这里（按日期倒序），runbook 只保留"当前状态"不再堆时序日志。
 > 格式参考 Keep a Changelog；提交号可 `git show <hash>` 查看全文。
 
+## 2026-08-25 · 终审修复（就绪检查/密钥回退/移除同步blrec/清理）
+
+- **feat(dashboard) `ab523cf`**：仪表盘新增全流程就绪检查卡片（七项逐条✓/✗，60秒自动刷新+手动刷新按钮）；`/api/readiness` 端点；cookie 正则修正（值含转义引号时 `[^"]` 截断→MULTILINE 行匹配）；verify.ps1 面板未运行改自动拉起+FAIL 策略。
+- **fix(critical) `fb4e561`**：面板移除房间同步通知 blrec 停止任务——原 remove 只删 settings.toml 不通知 blrec，blrec 内存任务继续录制直到容器重启（用户实锤：1937830735 移除后仍在录）；add 同理同步添加+启用 monitor/recorder，不再需重启容器。
+- **fix(critical) `d1fb67d`**：api_key.txt BOM 导致全部总结失败——Out-File UTF8 写入的文件带 BOM，Python read_text(utf-8) 读出 \ufeff 前缀 → HTTP header 编码崩溃；get_api_key 用 utf-8-sig 剥 BOM + lstrip 双保险；9 段积压总结全部补齐。
+- **fix(session) `36af6df`**：session.py get_api_key 补 api_key.txt 回退（与 summarize_host 统一）；14323359 场次聚合+场级总结实测通过。
+- **chore `261ce7a`**：清理 10 个临时诊断脚本。
+
 ## 2026-08-25 · 片段库场次分组 + 忽略总结 + 密钥三级回退 + 乱码修复
 
 - **feat(ux) `0d3f92e`**：片段库（原分段库）按场次分组渲染——组头含徽章/标题/时段/段数/

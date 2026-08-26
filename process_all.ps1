@@ -29,7 +29,11 @@ try {
     $script:lockStream = [IO.File]::Open($LockFile, 'OpenOrCreate', 'ReadWrite', 'None')
 } catch {
     $ageMin = if (Test-Path $LockFile) { [int]((Get-Date) - (Get-Item $LockFile).LastWriteTime).TotalMinutes } else { -1 }
-    if ($Force -or $ageMin -gt 120) { Log "强抢死锁锁(锁龄${ageMin}分钟)"; try { Remove-Item $LockFile -Force } catch {}; $script:lockStream = [IO.File]::Open($LockFile, 'OpenOrCreate', 'ReadWrite', 'None') }
+    if ($Force -or $ageMin -gt 120) {
+        Log "强抢死锁锁(锁龄${ageMin}分钟)"
+        try { Remove-Item $LockFile -Force -ErrorAction Stop } catch { Write-Host "[锁] 移除失败: $_"; exit 3 }
+        try { $script:lockStream = [IO.File]::Open($LockFile, 'OpenOrCreate', 'ReadWrite', 'None') } catch { Write-Host "[锁] 重开失败: $_"; exit 3 }
+    }
     else { Write-Host "[锁] 其他处理进程运行中(锁龄${ageMin}分钟)，退出。加 -Force 可强抢"; exit 3 }
 }
 try {
@@ -147,6 +151,7 @@ try {
         try { & (Join-Path $PSScriptRoot 'notify.ps1') -Title '处理失败' -Text ("{0} 段处理失败，下轮自动重试（详见流水线日志）" -f $failList.Count) -Level warn } catch {}
     }
     Log "批量处理结束"
+    if ($failList) { exit 2 }   # 评审[中]：有失败段时退出码非 0，调度器可感知
 } finally {
     Unlock
 }

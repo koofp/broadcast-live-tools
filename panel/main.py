@@ -290,6 +290,9 @@ async def api_jobs_enqueue(req: Request):
     for room in services.VIDEOS.iterdir():
         cand = room / name if name else None
         if cand and cand.exists():
+            # 修复(评审P2)：路径穿越防护——断言解析后路径在 Videos 内
+            if not cand.resolve().is_relative_to(services.VIDEOS.resolve()):
+                continue
             hit = str(cand); break
     if not hit:
         return JSONResponse({"queued": False, "reason": "file not found"}, status_code=404)

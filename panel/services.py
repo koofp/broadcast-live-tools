@@ -732,7 +732,8 @@ def _write_settings(text: str):
 
 def add_room(room_id: int) -> tuple[bool, str]:
     text = SETTINGS.read_text(encoding="utf-8-sig") if SETTINGS.exists() else ""
-    if f"room_id = {room_id}" in text:
+    # 修复(评审P1)：原子串匹配 "room_id = 123" 会误命中 "= 1234"；改按行精确匹配
+    if re.search(rf'^\s*room_id\s*=\s*{room_id}\s*$', text, re.MULTILINE):
         return False, "房间已存在"
     block = (f"\n[[tasks]]\nroom_id = {room_id}\n"
              "enable_monitor = true\nenable_recorder = true\n")
