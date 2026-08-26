@@ -337,8 +337,29 @@ async def api_rooms_add(req: Request):
                              "reason": f"房间不存在或无法访问（{v.get('reason','校验失败')}）"},
                             status_code=400)
     ok, msg = await run_in_threadpool(services.add_room, rid)
-    return JSONResponse({"ok": ok, "reason": f"{msg} · {v.get('title','')}",
-                         "need_restart": ok})
+    # 修复（与 remove 对称）：同步通知 blrec 添加任务——不需要重启容器即可生效
+    blrec_ok = False
+    if ok:
+        try:
+            import urllib.request as _ur
+            req_blrec = _ur.Request(
+                f"http://127.0.0.1:22333/api/v1/tasks/{rid}",
+                method="POST",
+                headers={"X-API-KEY": "Bil1veLocal2026"})
+            _ur.urlopen(req_blrec, timeout=10)
+            blrec_ok = True
+            # b5 新任务默认 monitor/recorder 关闭 → 立即启用
+            for ep in ("monitor/enable", "recorder/enable"):
+                req_en = _ur.Request(
+                    f"http://127.0.0.1:22333/api/v1/tasks/{rid}/{ep}",
+                    method="POST",
+                    headers={"X-API-KEY": "Bil1veLocal2026"})
+                _ur.urlopen(req_en, timeout=10)
+        except Exception:
+            pass  # blrec 不可达时仅跳过（下次容器重启自然生效）
+    return JSONResponse({"ok": ok,
+                         "reason": f"{msg} · {v.get('title','')}" + (" · 已实时生效" if blrec_ok else " · 需重启容器生效"),
+                         "need_restart": not blrec_ok})
 
 
 @app.post("/api/rooms/remove")
@@ -349,6 +370,18 @@ async def api_rooms_remove(req: Request):
     except Exception:
         return JSONResponse({"ok": False, "reason": "房间号必须是数字"}, status_code=400)
     ok, msg = await run_in_threadpool(services.remove_room, rid)
+    # 修复（用户实锤缺陷）：同步通知 blrec 移除任务——否则 blrec 在内存中
+    # 继续监控/录制已"移除"的房间，直到下次容器重启才消失
+    if ok:
+        try:
+            import urllib.request as _ur
+            req_blrec = _ur.Request(
+                f"http://127.0.0.1:22333/api/v1/tasks/{rid}",
+                method="DELETE",
+                headers={"X-API-KEY": "Bil1veLocal2026"})
+            _ur.urlopen(req_blrec, timeout=10)
+        except Exception:
+            pass  # blrec 不可达时仅跳过（容器重启后自然生效）
     return JSONResponse({"ok": ok, "reason": msg, "need_restart": ok})
 
 

@@ -23,7 +23,9 @@
 </div>
 
 <div class="card wide" style="margin-bottom:22px">
-  <div class="k">全流程就绪检查</div>
+  <div class="k">全流程就绪检查 <span class="mut" style="font-weight:400;text-transform:none;letter-spacing:0">· 每 60 秒自动刷新</span>
+    <button class="btn ghost btn-xs" id="btn-refresh-readiness" style="float:right;margin-top:-4px" onclick="loadReadiness()">↻ 刷新</button>
+  </div>
   <div id="readiness-box" style="margin-top:8px">
     <span class="mut">加载中…</span>
   </div>
@@ -84,20 +86,25 @@ App.pageInit.dashboard = async function(){
   } else {
     ['f-tr','f-sum','f-done'].forEach(id=>{const el=document.getElementById(id); if(el) el.textContent='获取失败';});
   }
-  // 就绪检查
-  const rd = await App.fetchJSON('/api/readiness');
-  const box = App.q('#readiness-box');
-  if (rd && rd.items) {
-    let html = '<table class="tbl" style="margin:0"><thead><tr><th style="width:130px">检查项</th><th>状态</th></tr></thead><tbody>';
-    for (const item of rd.items) {
-      const icon = item.ok ? '<span class="ok" style="font-weight:700">✓</span>' : '<span class="bad" style="font-weight:700">✗</span>';
-      html += `<tr><td style="padding:6px 12px">${item.name}</td><td style="padding:6px 12px">${icon} ${item.detail}</td></tr>`;
+  // 就绪检查（可重复调用：初始加载 + 刷新按钮 + 60s 定时）
+  async function loadReadiness() {
+    const rd = await App.fetchJSON('/api/readiness');
+    const box = App.q('#readiness-box');
+    if (rd && rd.items) {
+      let html = '<table class="tbl" style="margin:0"><thead><tr><th style="width:130px">检查项</th><th>状态</th></tr></thead><tbody>';
+      for (const item of rd.items) {
+        const icon = item.ok ? '<span class="ok" style="font-weight:700">✓</span>' : '<span class="bad" style="font-weight:700">✗</span>';
+        html += `<tr><td style="padding:6px 12px">${item.name}</td><td style="padding:6px 12px">${icon} ${item.detail}</td></tr>`;
+      }
+      html += '</tbody></table>';
+      box.innerHTML = html;
+    } else {
+      box.innerHTML = '<span class="bad">就绪检查获取失败</span>';
     }
-    html += '</tbody></table>';
-    box.innerHTML = html;
-  } else {
-    box.innerHTML = '<span class="bad">就绪检查获取失败</span>';
   }
+  await loadReadiness();
+  setInterval(loadReadiness, 60000);
+  App.q('#btn-refresh-readiness').onclick = loadReadiness;
 };
 </script>
 {% endblock %}
