@@ -477,6 +477,30 @@ def readiness_check() -> dict:
     return {"items": items, "all_ok": all(i["ok"] for i in items)}
 
 
+def read_prompt(room: str = "global") -> str:
+    """读取提示词：房间号 → prompt.<room>.txt；global → prompt.txt。"""
+    if room == "global":
+        p = ROOT / "prompt.txt"
+    else:
+        p = ROOT / f"prompt.{room}.txt"
+    if p.exists():
+        return p.read_text(encoding="utf-8", errors="ignore")
+    return ""
+
+
+def write_prompt(room: str, content: str) -> bool:
+    """写入提示词文件。global → prompt.txt，其他 → prompt.<room>.txt。"""
+    try:
+        if room == "global":
+            p = ROOT / "prompt.txt"
+        else:
+            p = ROOT / f"prompt.{room}.txt"
+        p.write_text(content, encoding="utf-8")
+        return True
+    except Exception:
+        return False
+
+
 def summaries_list(query: str = "") -> list:
     out = []
     items = []

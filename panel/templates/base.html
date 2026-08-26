@@ -26,6 +26,8 @@
     <a href="/summaries" class="{% if request.url.path.startswith('/summaries') %}active{% endif %}">
       <svg viewBox="0 0 16 16"><path d="M3 1h8l3 3v11H3V1zm2 4h6v1.5H5V5zm0 3h6v1.5H5V8zm0 3h4v1.5H5V11z"/></svg>总结库</a>
     <div class="nav-label">系统</div>
+    <a href="/prompts" class="{% if request.url.path.startswith('/prompts') %}active{% endif %}">
+      <svg viewBox="0 0 16 16"><path d="M3 1h10v14H3V1zm2 3h6v1.5H5V4zm0 3h6v1.5H5V7zm0 3h4v1.5H5V10z"/></svg>提示词</a>
     <a href="/settings" class="{% if request.url.path.startswith('/settings') %}active{% endif %}">
       <svg viewBox="0 0 16 16"><path d="M8 5a3 3 0 1 0 0 6 3 3 0 0 0 0-6zm6.5 3c0-.5-.05-1-.14-1.47l1.6-1.24-1.5-2.6-1.9.77A6.5 6.5 0 0 0 10.6 2.2L10.3.1H5.7L5.4 2.2c-.75.3-1.43.73-2.02 1.26l-1.9-.77-1.5 2.6 1.6 1.24a7.6 7.6 0 0 0 0 2.94l-1.6 1.24 1.5 2.6 1.9-.77c.59.53 1.27.96 2.02 1.26l.3 2.1h4.6l.3-2.1a6.5 6.5 0 0 0 2.02-1.26l1.9.77 1.5-2.6-1.6-1.24c.09-.47.14-.97.14-1.47z" transform="scale(0.9)"/></svg>设置</a>
   </nav>

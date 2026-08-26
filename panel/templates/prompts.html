@@ -1,0 +1,66 @@
+{% extends "base.html" %}
+{% block title %}提示词管理{% endblock %}
+{% block h1 %}提示词管理{% endblock %}
+{% block page %}prompts{% endblock %}
+{% block content %}
+<div class="card wide" style="margin-bottom:22px">
+  <div class="k">提示词管理</div>
+  <div class="hint" style="margin-top:4px">
+    每个直播间可配置专属提示词（<code>prompt.&lt;房间号&gt;.txt</code>），未配置的房间使用全局默认。
+    编辑后保存，下一段总结自动生效。支持占位符 <code>{srt}</code>。
+  </div>
+</div>
+
+<div class="grid" style="margin-bottom:22px">
+  {% for r in rooms %}
+  <a class="card link" href="#" onclick="loadPrompt('{{ r.room_id }}');return false;">
+    <div class="chip {% if room_prompts[r.room_id|string] %}chip-green{% else %}chip-amber{% endif %}"><svg viewBox="0 0 16 16"><path d="M3 1h10v14H3V1zm2 3h6v1.5H5V4zm0 3h6v1.5H5V7zm0 3h4v1.5H5V10z"/></svg></div>
+    <div class="k">房间 {{ r.room_id }}</div>
+    <div class="v sm">{% if room_prompts[r.room_id|string] %}✓ 自定义提示词{% else %}使用全局默认{% endif %}</div>
+    <div class="hint">点击编辑 →</div>
+  </a>
+  {% endfor %}
+</div>
+
+<div class="card wide" style="display:none;margin-bottom:22px" id="editor-card">
+  <div class="k" id="editor-title"></div>
+  <textarea id="prompt-editor" style="width:100%;min-height:400px;margin:8px 0;padding:12px;font-family:'Cascadia Code','Fira Code',monospace;font-size:13px;line-height:1.6;border:1px solid #333;border-radius:8px;background:#12151c;color:#d0d8e8;resize:vertical;"></textarea>
+  <div style="display:flex;gap:12px;align-items:center;margin-top:4px">
+    <button class="btn primary" id="btn-save-prompt">💾 保存</button>
+    <span id="save-status" class="mut"></span>
+    <span class="mut">· 支持 {srt} 占位符 · 保存后下一段总结自动生效</span>
+  </div>
+</div>
+
+<script>
+let currentRoom = '';
+
+async function loadPrompt(room) {
+  currentRoom = room;
+  const res = await fetch(`/api/prompts/${room}`);
+  const data = await res.json();
+  document.getElementById('editor-card').style.display = 'block';
+  document.getElementById('editor-title').textContent =
+    room === 'global' ? '全局默认提示词' : `房间 ${room} 专属提示词`;
+  document.getElementById('prompt-editor').value = data.content || '';
+  const st = document.getElementById('save-status');
+  st.textContent = data.content ? '' : '(空=当前无自定义，将使用全局默认)';
+  st.className = data.content ? 'ok' : 'mut';
+  document.getElementById('editor-card').scrollIntoView({ behavior: 'smooth' });
+}
+
+document.getElementById('btn-save-prompt').onclick = async () => {
+  if (!currentRoom) return;
+  const content = document.getElementById('prompt-editor').value;
+  const st = document.getElementById('save-status');
+  st.textContent = '保存中…'; st.className = 'mut';
+  const res = await fetch(`/api/prompts/${currentRoom}`, {
+    method: 'PUT', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({content})
+  });
+  const d = await res.json();
+  st.textContent = d.ok ? '✓ 已保存，下一段总结自动生效' : '✗ 保存失败';
+  st.className = d.ok ? 'ok' : 'bad';
+};
+</script>
+{% endblock %}

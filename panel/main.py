@@ -391,6 +391,36 @@ def api_readiness():
     return services.readiness_check()
 
 
+@app.get("/prompts")
+def page_prompts(req: Request):
+    rooms = services.rooms_from_settings()
+    global_prompt = services.read_prompt("global")
+    room_prompts = {}
+    for r in rooms:
+        rid = str(r["room_id"])
+        room_prompts[rid] = bool(services.read_prompt(rid))
+    return templates.TemplateResponse(req, "prompts.html", {
+        "title": "提示词",
+        "rooms": rooms,
+        "room_prompts": room_prompts,
+    })
+
+
+@app.get("/api/prompts/{room}")
+def api_prompts_get(room: str):
+    return {"room": room, "content": services.read_prompt(room)}
+
+
+@app.put("/api/prompts/{room}")
+async def api_prompts_put(room: str, req: Request):
+    b = await req.json()
+    content = b.get("content", "")
+    if not isinstance(content, str) or len(content) > 20000:
+        return JSONResponse({"ok": False, "reason": "内容为空或超长"}, status_code=400)
+    ok = await run_in_threadpool(services.write_prompt, room, content)
+    return JSONResponse({"ok": ok})
+
+
 @app.get("/api/sessions")
 def api_sessions():
     return services.sessions_index()
