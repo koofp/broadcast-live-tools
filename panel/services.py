@@ -478,24 +478,29 @@ def readiness_check() -> dict:
 
 
 def read_prompt(room: str = "global") -> str:
-    """读取提示词：房间号 → prompt.<room>.txt；global → prompt.txt。"""
-    if room == "global":
-        p = ROOT / "prompt.txt"
-    else:
-        p = ROOT / f"prompt.{room}.txt"
-    if p.exists():
-        return p.read_text(encoding="utf-8", errors="ignore")
-    return ""
+    """读取提示词：房间号 → prompt.<room>.txt；global → prompt.txt。
+    修复(评审P1)：入口校验防反斜杠路径穿越；去 errors=ignore 防静默截断。"""
+    if not re.fullmatch(r"\d+", room) and room != "global":
+        return ""
+    p = (ROOT / "prompt.txt") if room == "global" else (ROOT / f"prompt.{room}.txt")
+    if not p.exists():
+        return ""
+    try:
+        return p.read_text(encoding="utf-8-sig")
+    except UnicodeDecodeError:
+        return p.read_text(encoding="utf-8-sig", errors="replace")
 
 
 def write_prompt(room: str, content: str) -> bool:
-    """写入提示词文件。global → prompt.txt，其他 → prompt.<room>.txt。"""
+    """写入提示词文件。global → prompt.txt，其他 → prompt.<room>.txt。
+    修复(评审P2)：tmp+os.replace 原子写，防止并发读到半写内容。"""
+    if not re.fullmatch(r"\d+", room) and room != "global":
+        return False
     try:
-        if room == "global":
-            p = ROOT / "prompt.txt"
-        else:
-            p = ROOT / f"prompt.{room}.txt"
-        p.write_text(content, encoding="utf-8")
+        p = (ROOT / "prompt.txt") if room == "global" else (ROOT / f"prompt.{room}.txt")
+        tmp = p.with_suffix(".tmp")
+        tmp.write_text(content, encoding="utf-8")
+        os.replace(str(tmp), str(p))
         return True
     except Exception:
         return False

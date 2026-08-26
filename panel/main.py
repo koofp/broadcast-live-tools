@@ -415,10 +415,13 @@ def api_prompts_get(room: str):
 async def api_prompts_put(room: str, req: Request):
     b = await req.json()
     content = b.get("content", "")
-    if not isinstance(content, str) or len(content) > 20000:
-        return JSONResponse({"ok": False, "reason": "内容为空或超长"}, status_code=400)
+    # 修复(评审P1)：拒空串（防写入空文件导致总结无提示词）；拒超长
+    if not isinstance(content, str) or not content.strip() or len(content) > 20000:
+        return JSONResponse({"ok": False, "reason": "内容为空或超长(上限20000字符)"}, status_code=400)
     ok = await run_in_threadpool(services.write_prompt, room, content)
-    return JSONResponse({"ok": ok})
+    if not ok:
+        return JSONResponse({"ok": False, "reason": "无效房间号或写入失败"}, status_code=400)
+    return JSONResponse({"ok": True})
 
 
 @app.get("/api/sessions")
