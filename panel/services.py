@@ -796,14 +796,14 @@ def validate_room(room_id: int) -> dict:
         return {"valid": False, "reason": repr(e)[:120]}
 
 def get_api_key() -> str:
-    """API key 三级回退：环境变量 → api_key.txt 文件 → 注册表。
+    """API key 三级回退：环境变量 → api_key.txt 文件（utf-8-sig 剥 BOM）→ 注册表。
     文件方式解决"新进程/旧会话读不到环境变量"的问题。"""
     k = os.environ.get("OPENROUTER_API_KEY", "").strip()
     if k:
         return k
     key_file = ROOT / "api_key.txt"
     if key_file.exists():
-        k = key_file.read_text(encoding="utf-8").strip()
+        k = key_file.read_text(encoding="utf-8-sig").strip().lstrip("\ufeff")
         if k:
             return k
     try:

@@ -143,13 +143,14 @@ def pick_prompt(srt_path: Path, global_tpl: str) -> str:
 
 def get_api_key() -> str:
     """API key 三级回退：环境变量 → api_key.txt 文件 → 空串。
-    文件方式解决"新进程/旧会话读不到环境变量"的问题。"""
+    文件方式解决"新进程/旧会话读不到环境变量"的问题。
+    注意 utf-8-sig 剥 BOM：Out-File UTF8 会加 BOM，残留 \ufeff 导致 HTTP header 编码崩溃。"""
     k = os.environ.get("OPENROUTER_API_KEY", "").strip()
     if k:
         return k
     key_file = Path(__file__).resolve().parent / "api_key.txt"
     if key_file.exists():
-        k = key_file.read_text(encoding="utf-8").strip()
+        k = key_file.read_text(encoding="utf-8-sig").strip().lstrip("\ufeff")
         if k:
             return k
     return ""
