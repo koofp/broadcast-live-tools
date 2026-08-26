@@ -341,25 +341,23 @@ async def api_rooms_add(req: Request):
                             status_code=400)
     ok, msg = await run_in_threadpool(services.add_room, rid)
     # 修复（与 remove 对称）：同步通知 blrec 添加任务——不需要重启容器即可生效
+    # 修复(评审P1)：blrec API 调用包进 run_in_threadpool，不再阻塞事件循环
     blrec_ok = False
     if ok:
-        try:
+        def _blrec_add():
             import urllib.request as _ur
-            req_blrec = _ur.Request(
-                f"http://127.0.0.1:22333/api/v1/tasks/{rid}",
-                method="POST",
-                headers={"X-API-KEY": "Bil1veLocal2026"})
-            _ur.urlopen(req_blrec, timeout=10)
-            blrec_ok = True
-            # b5 新任务默认 monitor/recorder 关闭 → 立即启用
+            req_t = _ur.Request(f"http://127.0.0.1:22333/api/v1/tasks/{rid}",
+                                method="POST", headers={"X-API-KEY": "Bil1veLocal2026"})
+            _ur.urlopen(req_t, timeout=10)
             for ep in ("monitor/enable", "recorder/enable"):
-                req_en = _ur.Request(
-                    f"http://127.0.0.1:22333/api/v1/tasks/{rid}/{ep}",
-                    method="POST",
-                    headers={"X-API-KEY": "Bil1veLocal2026"})
-                _ur.urlopen(req_en, timeout=10)
+                req_e = _ur.Request(f"http://127.0.0.1:22333/api/v1/tasks/{rid}/{ep}",
+                                    method="POST", headers={"X-API-KEY": "Bil1veLocal2026"})
+                _ur.urlopen(req_e, timeout=10)
+        try:
+            await run_in_threadpool(_blrec_add)
+            blrec_ok = True
         except Exception:
-            pass  # blrec 不可达时仅跳过（下次容器重启自然生效）
+            pass
     return JSONResponse({"ok": ok,
                          "reason": f"{msg} · {v.get('title','')}" + (" · 已实时生效" if blrec_ok else " · 需重启容器生效"),
                          "need_restart": not blrec_ok})
@@ -376,16 +374,16 @@ async def api_rooms_remove(req: Request):
     # 修复（用户实锤缺陷）：同步通知 blrec 移除任务——否则 blrec 在内存中
     # 继续监控/录制已"移除"的房间，直到下次容器重启才消失
     if ok:
-        try:
+        def _blrec_remove():
             import urllib.request as _ur
-            req_blrec = _ur.Request(
-                f"http://127.0.0.1:22333/api/v1/tasks/{rid}",
-                method="DELETE",
-                headers={"X-API-KEY": "Bil1veLocal2026"})
-            _ur.urlopen(req_blrec, timeout=10)
+            req_d = _ur.Request(f"http://127.0.0.1:22333/api/v1/tasks/{rid}",
+                                method="DELETE", headers={"X-API-KEY": "Bil1veLocal2026"})
+            _ur.urlopen(req_d, timeout=10)
+        try:
+            await run_in_threadpool(_blrec_remove)
         except Exception:
-            pass  # blrec 不可达时仅跳过（容器重启后自然生效）
-    return JSONResponse({"ok": ok, "reason": msg, "need_restart": ok})
+            pass
+    return JSONResponse({"ok": ok, "reason": msg, "need_restart": not ok})
 
 
 @app.get("/api/readiness")

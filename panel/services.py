@@ -438,7 +438,8 @@ def readiness_check() -> dict:
         try:
             st = SETTINGS.read_text(encoding="utf-8-sig", errors="ignore")
             # cookie 值内可能含转义引号 \" → 匹配整行而非 [^"]
-            m = _re.search(r'cookie\s*=\s*"(.+?)"\s*$', st, _re.MULTILINE)
+            # 评审[中]：去 $ 锚定——TOML 行尾可能有 # 注释导致匹配失败
+            m = _re.search(r'cookie\s*=\s*"(.+?)"', st)
             if m and len(m.group(1)) > 10 and "SESSDATA" in m.group(1):
                 cookie_ok = True
                 cookie_detail = "已持久化（含登录态）"
