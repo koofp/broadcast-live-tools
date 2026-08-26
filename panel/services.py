@@ -516,7 +516,11 @@ def summaries_list(query: str = "") -> list:
         if query and query.lower() not in json.dumps(item, ensure_ascii=False).lower():
             continue
         out.append(item)
-    # 场次排前排（产品定案：场级负责浏览，段级负责定位）
+    # 修复（用户实锤）：同一场直播的段级总结被场级总结覆盖时，
+    # 隐藏段级条目——总结库只显示"1 场 = 1 条"，不再段级/场级混杂
+    session_rooms = {r["room"] for r in out if r["kind"] == "session"}
+    out = [r for r in out if r["kind"] == "session" or r["room"] not in session_rooms]
+    # 场次排前排
     out.sort(key=lambda r: (0 if r["kind"] == "session" else 1,
                             0 if r["kind"] == "session" else -time.mktime(
                                 time.strptime(r["date"], "%Y-%m-%d %H:%M"))))
