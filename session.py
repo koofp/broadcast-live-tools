@@ -32,6 +32,7 @@ MIN_SEG_FOR_LLM = 3    # 少于该段数不触发 LLM 场级总结（段级已�
 
 sys.path.insert(0, str(ROOT))
 from summarize_host import call_oxalpha  # 复用模型/退避语义；429 重试循环在本文件内实现
+import provider_config
 
 # ---------- 时间戳解析（双命名格式，实测 46 文件全通过） ----------
 _RE_STD = re.compile(r"_(\d{8})-(\d{2})-(\d{2})-(\d{2})")          # room_20260822-15-08-27.mp4
@@ -325,26 +326,9 @@ def gen_session_summary(session: dict, key: str, force: bool) -> bool:
 
 
 def get_api_key() -> str:
-    k = os.environ.get("OPENROUTER_API_KEY", "").strip()
-    if k:
-        return k
-    # api_key.txt 回退（与 summarize_host 统一）
-    key_file = Path(__file__).resolve().parent / "api_key.txt"
-    if key_file.exists():
-        k = key_file.read_text(encoding="utf-8-sig").strip().lstrip("\ufeff")
-        if k:
-            return k
-    import subprocess
-    try:
-        out = subprocess.run(["reg", "query", r"HKCU\Environment", "/v", "OPENROUTER_API_KEY"],
-                             capture_output=True, text=True, timeout=8).stdout
-        for ln in out.splitlines():
-            if "OPENROUTER_API_KEY" in ln and "REG_SZ" in ln:
-                return ln.split("REG_SZ")[-1].strip()
-    except Exception:
-        pass
-    return ""
-
+    """API key：优先设置页 provider.json，回退 env / api_key.txt / 注册表。
+    交由 provider_config 统一解析，确保 summarize 与面板/场级总结口径一致。"""
+    return provider_config.resolve()["api_key"]
 
 # ---------- 主流程 ----------
 def print_table(data: dict):
@@ -428,7 +412,7 @@ def main():
     if a.summarize:
         key = get_api_key()
         if not key:
-            print("[fatal] 未设置 OPENROUTER_API_KEY", flush=True)
+            print("[fatal] 未配置 API key（设置页 AI 供应商 / OPENROUTER_API_KEY / api_key.txt / 注册表 均为空）", flush=True)
             sys.exit(1)
         for room, data in results.items():
             for s in data["sessions"]:

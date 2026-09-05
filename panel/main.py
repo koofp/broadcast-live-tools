@@ -31,6 +31,24 @@ app = FastAPI(title="bilive panel", docs_url=None, redoc_url=None)
 templates = Jinja2Templates(directory=str(BASE / "templates"))
 app.mount("/static", StaticFiles(directory=str(BASE / "static")), name="static")
 
+# 本机防护（评审发现）：面板只绑定 127.0.0.1，但浏览器内恶意页面可跨站 POST
+# （/api/provider 可改写 key 去向=密钥外泄跳板），DNS rebinding 可伪装 Host 读接口。
+# 规则：非本机 Host 一律 403；写方法带 Origin 时必须同源。curl/计划任务无 Origin，按 Host 放行。
+_LOCAL_HOSTS = {"127.0.0.1:9090", "localhost:9090"}
+
+
+@app.middleware("http")
+async def _local_guard(request: Request, call_next):
+    host = (request.headers.get("host") or "").lower()
+    if host and host not in _LOCAL_HOSTS:
+        return JSONResponse({"error": f"host {host} 不在允许列表（面板仅限本机访问）"},
+                            status_code=403)
+    if request.method not in ("GET", "HEAD", "OPTIONS"):
+        origin = (request.headers.get("origin") or "").lower()
+        if origin and origin.split("://", 1)[-1] not in _LOCAL_HOSTS:
+            return JSONResponse({"error": "跨站写请求已拦截"}, status_code=403)
+    return await call_next(request)
+
 VERSION = "3.2"
 BELOW_NORMAL = 0x00004000
 
@@ -50,20 +68,11 @@ def _wants_json(request: Request) -> bool:
 
 
 # ---------- 任务队列 Worker ----------
-_worker_env_cache = None
-
-
 def _get_worker_env():
-    """修复(评审高危)：原函数与模块级变量同名——def 覆盖赋值后 global 永非 None，
-    return 返回函数自身 → subprocess.run(env=<function>) 必抛 TypeError，队列全瘫痪。"""
-    global _worker_env_cache
-    if _worker_env_cache is None:
-        e = os.environ.copy()
-        k = services.get_api_key()
-        if k:
-            e["OPENROUTER_API_KEY"] = k
-        _worker_env_cache = e
-    return _worker_env_cache
+    """子进程环境：不做任何 key 注入。summarize/session 均经 provider_config
+    自行解析（provider.json > env > api_key.txt > 注册表），此处注入快照会在
+    设置页改 key 后产生"改了配置 Worker 仍用旧 key"的陈旧值（评审发现）。"""
+    return os.environ.copy()
 
 
 def _run_job(job: dict):
@@ -271,7 +280,7 @@ def page_settings(request: Request):
     return nav(request, "设置", "settings.html",
                prompt=services.get_prompt(),
                prompt_bak=services.get_prompt_bak(),
-               key_set=bool(services.get_api_key()),
+               provider=services.provider_view(),
                model_dir=str(Path(services.ROOT) / "models" / "faster-whisper-small"),
                image="bilive-fixed:0.3.1")
 
@@ -538,6 +547,40 @@ async def api_prompt_rollback():
         return JSONResponse({"restored": False, "reason": "无备份版本"}, status_code=404)
     ok, _ = services.set_prompt(bak)
     return {"restored": ok}
+
+
+@app.get("/api/provider")
+def api_provider_get():
+    return services.provider_view()
+
+
+@app.post("/api/provider")
+async def api_provider_set(req: Request):
+    b = await req.json()
+    base_url, api_key, active_model = b.get("base_url"), b.get("api_key"), b.get("active_model")
+    models = b.get("models")
+    # 评审发现：此前只校验 models 是 list，元素非字符串（如数字）会在 services 层
+    # m.strip() 抛 AttributeError → 500；base_url 等非字符串同理。入口统一严检。
+    if not all(isinstance(x, str) for x in (base_url, api_key, active_model)):
+        return JSONResponse({"saved": False, "reason": "base_url/api_key/active_model 必须为字符串"},
+                            status_code=400)
+    if not isinstance(models, list) or not models or \
+            not all(isinstance(m, str) and m.strip() for m in models):
+        return JSONResponse({"saved": False, "reason": "models 必须为非空字符串列表（至少保留一个模型）"},
+                            status_code=400)
+    view = services.provider_save(base_url.strip(), api_key,
+                                  [m.strip() for m in models], active_model.strip())
+    return {"saved": True, "provider": view}
+
+
+@app.post("/api/provider/test")
+async def api_provider_test(req: Request):
+    b = await req.json()
+    base_url, api_key, model = b.get("base_url"), b.get("api_key"), b.get("model")
+    if not all(isinstance(x, str) for x in (base_url, api_key, model)):
+        return JSONResponse({"ok": False, "error": "base_url/api_key/model 必须为字符串"}, status_code=400)
+    # 留空参数由 services.provider_test 回退当前生效配置（resolve），与真实链路同源
+    return await run_in_threadpool(services.provider_test, base_url, api_key, model)
 
 
 @app.get("/api/summary")

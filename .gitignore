@@ -24,3 +24,8 @@ start_batch.cmd
 panel_stderr.log
 api_key.txt
 bili_cookies.txt
+# AI 供应商配置（含 key，绝不入库）
+provider.json
+# AI 工具本地脚手架（AionUi skill 符号链接，属用户个人环境）
+.claude/
+.codex/

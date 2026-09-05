@@ -11,11 +11,37 @@
   <span id="save-state" class="mut"></span>
 </div>
 
+<h2>AI 供应商（总结模型）</h2>
+<p class="mut">OpenAI 兼容中继。Base URL 形如 <code>https://new-api.abrdns.com</code>（自动补 <code>/v1/chat/completions</code>）。API Key 仅本地存储于 <code>provider.json</code>（已 gitignore），绝不入库。</p>
+<div class="cols">
+  <div>
+    <label class="mut">Base URL</label>
+    <input type="text" id="pv-base" placeholder="https://new-api.abrdns.com" value="{{ provider.base_url }}">
+    <label class="mut" style="margin-top:10px;display:block">API Key
+      {% if provider.key_set %}<span class="badge b-done">已配置 ······{{ provider.key_tail }}（来源：{{ provider.key_source }}）</span>{% else %}<span class="badge b-none">未设置——总结将失败</span>{% endif %}
+    </label>
+    <input type="password" id="pv-key" placeholder="留空则不修改已存 key">
+  </div>
+  <div>
+    <label class="mut">模型列表</label>
+    <div id="pv-models"></div>
+    <div class="row-actions" style="margin-top:8px">
+      <input type="text" id="pv-newmodel" placeholder="新增模型名，回车添加" style="flex:1">
+      <button class="btn ghost" id="pv-addmodel">＋ 添加</button>
+    </div>
+    <label class="mut" style="margin-top:10px;display:block">当前生效模型</label>
+    <select id="pv-active"></select>
+  </div>
+</div>
+<div class="row-actions" style="margin-top:14px">
+  <button class="btn primary" id="pv-save">💾 保存供应商</button>
+  <button class="btn ghost" id="pv-test">⚡ 测试当前模型</button>
+  <span id="pv-state" class="mut"></span>
+</div>
 <h2>系统信息（只读）</h2>
 <table class="tbl kv">
 <tr><th>镜像</th><td>{{ image }}</td></tr>
 <tr><th>whisper 权重目录</th><td><code>{{ model_dir }}</code></td></tr>
-<tr><th>OPENROUTER_API_KEY</th><td>{% if key_set %}<span class="badge b-done">已配置(环境变量)</span>{% else %}<span class="badge b-none">未设置——总结将失败</span>{% endif %}</td></tr>
 <tr><th>计划任务</th><td>bilive-pipeline(每30分钟) · bilive-panel(登录自启)</td></tr>
 <tr><th>blrec 控制台</th><td><a href="http://127.0.0.1:22333" target="_blank">127.0.0.1:22333</a>（密码 RECORD_KEY）</td></tr>
 </table>
@@ -46,6 +72,39 @@ App.pageInit.settings = function(){
     if(!confirm('回滚到上一版本提示词？'))return;
     const r=await(await fetch('/api/prompt/rollback',{method:'POST'})).json();
     if(r.restored)location.reload(); else alert(r.reason);
+  };
+  // ---- AI 供应商 ----
+  let pvModels = {{ provider.models | tojson }};
+  let pvActive = {{ provider.active_model | tojson }};
+  const pvModelsBox = App.q('#pv-models'), pvActiveSel = App.q('#pv-active');
+  function pvRender(){
+    pvModelsBox.innerHTML='';
+    pvModels.forEach((m,i)=>{
+      const row=document.createElement('div'); row.className='chk'; row.style.marginBottom='4px';
+      const span=document.createElement('span'); span.textContent=m; span.style.flex='1';
+      const btn=document.createElement('button'); btn.className='btn ghost btn-xs'; btn.textContent='删除';
+      btn.onclick=()=>{ pvModels.splice(i,1); if(pvActive===m) pvActive=pvModels[0]||''; pvRender(); };
+      row.append(span,btn); pvModelsBox.append(row);
+    });
+    pvActiveSel.innerHTML='';
+    pvModels.forEach(m=>{ const o=document.createElement('option'); o.value=m; o.textContent=m; if(m===pvActive) o.selected=true; pvActiveSel.append(o); });
+    if(!pvActive && pvModels.length) pvActiveSel.value=pvModels[0];
+  }
+  pvRender();
+  pvActiveSel.onchange=()=>{ pvActive=pvActiveSel.value; };
+  App.q('#pv-addmodel').onclick=()=>{ const v=App.q('#pv-newmodel').value.trim(); if(v&&!pvModels.includes(v)){ pvModels.push(v); if(!pvActive) pvActive=v; pvRender(); } App.q('#pv-newmodel').value=''; };
+  App.q('#pv-newmodel').addEventListener('keydown',e=>{ if(e.key==='Enter'){ e.preventDefault(); App.q('#pv-addmodel').click(); } });
+  App.q('#pv-save').onclick=async()=>{
+    const r=await App.postJSON('/api/provider',{base_url:App.q('#pv-base').value,api_key:App.q('#pv-key').value,models:pvModels,active_model:pvActiveSel.value});
+    const st=App.q('#pv-state');
+    if(r&&r.saved){ st.textContent='✓ 已保存'; App.q('#pv-key').value=''; setTimeout(()=>location.reload(),600); }
+    else st.textContent='✗ 失败: '+((r&&r.reason)||'未知');
+  };
+  App.q('#pv-test').onclick=async()=>{
+    const st=App.q('#pv-state'); st.textContent='测试中…（think 模型可能需 30-90s）';
+    const r=await App.postJSON('/api/provider/test',{base_url:App.q('#pv-base').value,api_key:App.q('#pv-key').value,model:pvActiveSel.value});
+    if(r&&r.ok) st.textContent='✓ 成功 · '+r.latency_ms+'ms · '+(r.preview||'');
+    else st.textContent='✗ '+(r&&r.error||'失败')+((r&&r.detail)?(' · '+r.detail):'');
   };
 };
 </script>

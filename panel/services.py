@@ -5,6 +5,7 @@
 import html as _html
 import json
 import os
+import provider_config
 import re
 import subprocess
 import threading
@@ -13,6 +14,8 @@ import urllib.request
 from collections import deque
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+
+from summarize_host import DEFAULT_PROMPT   # 单源复用：与批处理共用同一默认提示词（原两份已文本分叉）
 
 try:
     import tomllib
@@ -33,20 +36,6 @@ LOG_DIR = ROOT / "logs" / "pipeline"
 _PLACEHOLDER_MARK = "[无语音内容]"
 QUEUE_LOCK = threading.Lock()
 _run_lock_stream = None
-
-DEFAULT_PROMPT = """你是资深直播内容分析师。以下字幕来自语音识别，可能含同音误听，
-请结合语境自行纠正（游戏术语、DOTA2英雄名、装备名等）。
-
-字幕：
-{srt}
-
-请输出（Markdown）：
-## 一句话总结
-## 核心主题（不超过20字）
-## 讨论要点（按时间顺序，标注[mm:ss]，每条不超过25字）
-## 金句/名场面（如有，含时间戳）
-## 疑似识别错误对照表（原文→推测正确词）
-"""
 
 _PROGRESS_RE = re.compile(r"\.\.\.(\d{2}:\d{2}:\d{2}),\d+ \((\d+)条\)")
 
@@ -452,12 +441,12 @@ def readiness_check() -> dict:
             pass
     items.append({"name": "登录 cookie", "ok": cookie_ok, "detail": cookie_detail})
 
-    # 4) API key
-    key = get_api_key()
-    key_src = "环境变量" if os.environ.get("OPENROUTER_API_KEY", "").strip() else \
-              ("api_key.txt" if (ROOT / "api_key.txt").exists() else "")
+    # 4) API key（key_source 由 provider_config 双链解析给出，展示与真实链路同源）
+    resolved = provider_config.resolve()
+    key = resolved["api_key"]
     items.append({"name": "API key", "ok": bool(key),
-                  "detail": f"{key_src} ✓ ({len(key)} 字符)" if key else "未设置"})
+                  "detail": (f"{resolved['key_source']} ✓ ({len(key)} 字符)") if key
+                            else "未设置（设置页 AI 供应商 / OPENROUTER_API_KEY / api_key.txt / 注册表 均为空）"})
 
     # 5) 面板（自身即证明）
     items.append({"name": "面板", "ok": True, "detail": "200 ✓"})
@@ -466,8 +455,10 @@ def readiness_check() -> dict:
     clash_running = False
     try:
         import subprocess as _sp
+        # errors="replace"：GBK tasklist 输出遇 PYTHONUTF8=1 会在 reader 线程解码崩溃，
+        # clash_running 恒 False → 已运行也显示"已退出"（实测 traceback）
         r = _sp.run(["tasklist", "/FI", "IMAGENAME eq verge-mihomo.exe"],
-                    capture_output=True, text=True, timeout=5)
+                    capture_output=True, text=True, errors="replace", timeout=5)
         clash_running = "verge-mihomo" in r.stdout
     except Exception:
         pass
@@ -831,26 +822,52 @@ def validate_room(room_id: int) -> dict:
         return {"valid": False, "reason": repr(e)[:120]}
 
 def get_api_key() -> str:
-    """API key 三级回退：环境变量 → api_key.txt 文件（utf-8-sig 剥 BOM）→ 注册表。
-    文件方式解决"新进程/旧会话读不到环境变量"的问题。"""
-    k = os.environ.get("OPENROUTER_API_KEY", "").strip()
-    if k:
-        return k
-    key_file = ROOT / "api_key.txt"
-    if key_file.exists():
-        k = key_file.read_text(encoding="utf-8-sig").strip().lstrip("\ufeff")
-        if k:
-            return k
-    try:
-        out = subprocess.run(["reg", "query", r"HKCU\Environment", "/v", "OPENROUTER_API_KEY"],
-                             capture_output=True, text=True, timeout=8).stdout
-        for ln in out.splitlines():
-            if "OPENROUTER_API_KEY" in ln and "REG_SZ" in ln:
-                return ln.split("REG_SZ")[-1].strip()
-    except Exception:
-        pass
-    return ""
+    """API key：优先设置页 provider.json，回退 env / api_key.txt / 注册表。
+    交由 provider_config 统一解析，确保 summarize 与面板/场级总结口径一致。"""
+    return provider_config.resolve()["api_key"]
 
+def provider_view() -> dict:
+    """设置页用：返回当前生效供应商配置（key 仅回显尾部，不全文暴露）。
+    基于 resolve() 而非裸读 provider.json——legacy key（env/api_key.txt/注册表）时
+    页面展示与真实总结链路同源（评审发现：裸读会在 legacy 场景显示"未设置"）。"""
+    r = provider_config.resolve()
+    key = r["api_key"]
+    if r["key_source"] == "provider.json":
+        models = provider_config.load().get("models", [])
+    else:   # legacy 链：整套（含模型）展示 legacy 值，页面自洽
+        models = [r["model"]] if r["model"] else []
+    return {
+        "base_url": r["base_url"],
+        "models": models,
+        "active_model": r["model"],
+        "key_set": bool(key),
+        "key_tail": key[-6:] if key else "",
+        "key_source": r["key_source"],
+    }
+
+
+def provider_save(base_url: str, api_key: str, models: list, active_model: str) -> dict:
+    """保存供应商配置。api_key 为空则保留原 key（留空不修改），避免误清空。"""
+    cfg = provider_config.load()
+    if base_url:
+        cfg["base_url"] = base_url.strip()
+    if api_key and api_key.strip():
+        cfg["api_key"] = api_key.strip()
+    if isinstance(models, list):
+        cfg["models"] = [m.strip() for m in models if m and m.strip()]
+    if active_model and active_model.strip():
+        cfg["active_model"] = active_model.strip()
+    provider_config.save(cfg)
+    return provider_view()
+
+
+def provider_test(base_url: str, api_key: str, model: str) -> dict:
+    """测试模型连接：参数留空则回退当前生效配置（resolve），与真实总结链路同源。
+    （评审发现：原只回退 provider.json 存的 key，legacy 用户测试按钮会误报未配 key。）"""
+    r = provider_config.resolve()
+    return provider_config.test_model(base_url or r["base_url"],
+                                      api_key or r["api_key"],
+                                      model or r["model"])
 
 def is_placeholder_srt(srt_path: Path) -> bool:
     try:

@@ -9,14 +9,16 @@ $fail = @()
 # 1) Python 编译
 foreach ($f in 'panel.py','panel\main.py','panel\services.py','session.py',
                'transcribe_host.py','summarize_host.py','qa_check.py',
-               'report_gen.py','bilibili_transcribe.py') {
+               'report_gen.py','bilibili_transcribe.py','provider_config.py') {
     python -m py_compile $f 2>&1 | Out-Null
     if ($LASTEXITCODE -ne 0) { $fail += "py_compile: $f" }
 }
 
 # 1.5) 单元测试（无需 API/网络的纯逻辑回归；失败保留细节便于排查）
-$uOut = python tests\test_merge_archived.py 2>&1
-if ($LASTEXITCODE -ne 0) { $fail += ("unit: tests\test_merge_archived.py → " + ($uOut | Select-Object -Last 2) -join ' ') }
+foreach ($t in 'tests\test_merge_archived.py','tests\test_provider_config.py') {
+    $uOut = python $t 2>&1
+    if ($LASTEXITCODE -ne 0) { $fail += ("unit: $t → " + ($uOut | Select-Object -Last 2) -join ' ') }
+}
 
 # 2) PowerShell 解析 + BOM（含全部接线/测试脚本——评审：漏一个都可能静默坏掉）
 foreach ($f in 'process_all.ps1','cleanup.ps1','status.ps1','verify.ps1','notify.ps1','backup_metadata.ps1','selftest.ps1','bilive-unlock-check.ps1') {

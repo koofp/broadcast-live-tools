@@ -25,7 +25,9 @@ else { Log ("[ok] Videos 元数据同步完成 (robocopy={0})" -f $rcVideos) }
 # queue.json 撕裂风险说明：面板写入走 tmp+os.replace 原子替换，拷贝只会读到完整新旧之一
 $copied = 0
 $copyFail = @()
-foreach ($f in @('bilive-docker\settings.toml', 'prompt.txt', 'keep.txt', 'panel\queue.json')) {
+foreach ($f in @('bilive-docker\settings.toml', 'prompt.txt', 'keep.txt', 'panel\queue.json',
+                 'provider.json', 'api_key.txt')) {
+    # provider.json/api_key.txt 含 key：与 settings.toml（含 cookie）同级敏感，备份到同一受保护用户目录
     if (Test-Path $f) {
         $dstDir = Join-Path $Dest (Split-Path $f)
         try {

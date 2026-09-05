@@ -1,11 +1,14 @@
 # -*- coding: utf-8 -*-
-"""srt → AI 总结（OpenRouter ox-alpha）。幂等：已有 .summary.md 跳过。
+"""srt → AI 总结（供应商走 provider_config：设置页 provider.json 优先，legacy 回退 OpenRouter）。
+幂等：已有 .summary.md 跳过。
 用法:
   python summarize_host.py <srt...> [--prompt-file prompt.txt]
-环境变量: OPENROUTER_API_KEY 必须预先设置（不再写入源码）
+key 来源（与端点/模型同源，详见 provider_config 模块注释）:
+  设置页 provider.json > env OPENROUTER_API_KEY（历史名，泛指 LLM key）> api_key.txt > 注册表
 """
 import json, sys, os, time, argparse
 import urllib.request
+import provider_config
 from pathlib import Path
 
 try:  # 防 GBK 管道下非 ASCII 输出崩溃（计划任务/Worker 重定向场景）
@@ -30,25 +33,45 @@ DEFAULT_PROMPT = """你是资深直播内容分析师。以下字幕来自语音
 MAX_PROMPT_CHARS = 100000  # 超长截断保护（>6h 直播才可能触发）
 
 
-def call_oxalpha(prompt: str, key: str):
+def _chat(prompt, key, model, chat_url, max_tokens):
     body = json.dumps({
-        "model": "stealth/ox-alpha",
-        "max_tokens": 16000,
-        "reasoning": {"effort": "low"},
+        "model": model,
+        "max_tokens": max_tokens,
         "messages": [{"role": "user", "content": prompt}],
     }).encode()
     req = urllib.request.Request(
-        "https://openrouter.ai/api/v1/chat/completions", data=body,
+        chat_url, data=body,
         headers={"Authorization": "Bearer " + key, "Content-Type": "application/json"})
     raw = urllib.request.urlopen(req, timeout=900).read().decode("utf-8", "ignore")
     d = json.loads(raw)
-    msg = d["choices"][0]["message"]
-    text = msg.get("content")
+    choice = d["choices"][0]
+    msg = choice.get("message", {}) or {}
+    return (msg.get("content") or "", choice.get("finish_reason"),
+            msg.get("reasoning_content") or "", d.get("usage", {}))
+
+
+def call_llm(prompt, key=None, model=None, chat_url=None, max_tokens=None):
+    """通用 LLM 调用：参数缺省时读 provider_config（设置页可配）。
+    请求体保持 OpenAI messages 结构，兼容 new-api 等 OpenAI 兼容中继。"""
+    p = provider_config.resolve()
+    key = key or p["api_key"]
+    model = model or p["model"]
+    chat_url = chat_url or p["chat_url"]
+    max_tokens = max_tokens or provider_config.DEFAULT_MAX_TOKENS
+    if not key:
+        raise RuntimeError("未配置 API key（设置页 AI 供应商 / OPENROUTER_API_KEY / api_key.txt / 注册表 均为空）")
+    text, fr, reasoning, usage = _chat(prompt, key, model, chat_url, max_tokens)
+    if not text and reasoning and fr == "length":
+        # think 模型可能把额度耗在 reasoning_content（content=null）→ 提高上限再试一次
+        text, fr, _, _ = _chat(prompt, key, model, chat_url, max(64000, max_tokens * 2))
     if not text:
-        raise RuntimeError(f"空content finish={d['choices'][0].get('finish_reason')} "
-                           f"usage={json.dumps(d.get('usage', {}))[:160]}")
+        raise RuntimeError(f"空content finish={fr} usage={json.dumps(usage)[:160]}")
     return text
 
+
+def call_oxalpha(prompt, key=None):
+    """兼容旧调用名（session.py 复用）：委托 call_llm，参数走 provider_config。"""
+    return call_llm(prompt, key=key)
 
 def summarize(srt_path: Path, prompt_tpl: str, key: str) -> bool:
     out = srt_path.with_suffix(".summary.md")
@@ -142,19 +165,9 @@ def pick_prompt(srt_path: Path, global_tpl: str) -> str:
 
 
 def get_api_key() -> str:
-    """API key 三级回退：环境变量 → api_key.txt 文件 → 空串。
-    文件方式解决"新进程/旧会话读不到环境变量"的问题。
-    注意 utf-8-sig 剥 BOM：Out-File UTF8 会加 BOM，残留 \ufeff 导致 HTTP header 编码崩溃。"""
-    k = os.environ.get("OPENROUTER_API_KEY", "").strip()
-    if k:
-        return k
-    key_file = Path(__file__).resolve().parent / "api_key.txt"
-    if key_file.exists():
-        k = key_file.read_text(encoding="utf-8-sig").strip().lstrip("\ufeff")
-        if k:
-            return k
-    return ""
-
+    """API key：优先设置页 provider.json，回退 env / api_key.txt / 注册表。
+    交由 provider_config 统一解析，确保 summarize 与面板/场级总结口径一致。"""
+    return provider_config.resolve()["api_key"]
 
 def main():
     ap = argparse.ArgumentParser()
@@ -167,7 +180,7 @@ def main():
 
     key = get_api_key()
     if not key:
-        print("[fatal] 未找到 OPENROUTER_API_KEY（环境变量 / api_key.txt 均为空）", flush=True)
+        print("[fatal] 未配置 API key（设置页 AI 供应商 / OPENROUTER_API_KEY / api_key.txt / 注册表 均为空）", flush=True)
         sys.exit(1)
 
     pf = Path(a.prompt_file)
