@@ -3,6 +3,33 @@
 > 变更史。新变更记录到这里（按日期倒序），runbook 只保留"当前状态"不再堆时序日志。
 > 格式参考 Keep a Changelog；提交号可 `git show <hash>` 查看全文。
 
+## 2026-09-05 · 计划评审闭环：总结库可见性修复 + 场次自动化 + 告警三态化
+
+三视角评审（架构师/怀疑者/执行者）定稿执行，实锤并修正 v1 计划的三处假设错误：
+① `--summarize <房间号>` 文档用法静默空转（session.py:419 拿房间号比场次ID 永假，
+`--summarize X <sid>` 直接 exit 2）——正确形式 `--room X --summarize`，四处文档勘误；
+② "重算即可恢复可见性"不成立——隐藏规则按房间级触发，必须先改规则；
+③ "末尾挂钩子"永不执行——process_all 多个提前 exit，钩子必须置于 exit 分支前。
+
+- **fix(panel) 总结库覆盖式隐藏**：房间级隐藏（同房间有任意场级总结就吞全部段级）
+  收敛为"有场级 summary 文件的场次所列段"精确隐藏；sessions.json 缺失/损坏时
+  fail-open 全部可见并打日志。实锤场景：14323359 因 sessions.json stale（08-26）
+  导致 15 条段级总结整库隐身。测试先行（先红后绿）`tests/test_summaries_list.py`
+  （4 房间夹具：全覆盖/部分覆盖/无 _sessions/有场无缓存），verify.ps1 接入。
+- **fix(session) 场次数据补齐**：14323359 重算为 4 场×5 段，补 3 场场级总结
+  （首场指纹一致自动 skip）；总结库 8→11 条，08-27~09-01 内容重新可见。
+- **feat(status) 告警三态化**：红牌原条件 `fakeip AND stall` 在"无直播"时必然误报
+  （当日 3 连 BAD Toast 实锤）。新增 blrec 本地 API 录制探针（零外网依赖，4s 超时，
+  PS5.1 哈希键引号/`@()` 包裹/显式超时三陷阱规避），`fakeip_state=recording|idle|unknown`
+  落 JSON 透传面板；红牌收敛为 **劫持+确认在录+写入停滞** 三者同现（当日真实故障签名）；
+  idle 时停摆改黄牌"下播待机"。实测：同一数据态从 3 连红牌变为 `ok:true issues:[]`。
+  dashboard 双消费点（Jinja 首绘 + JS 刷新）同步三态，带旧字段回退。
+- **feat(pipeline) 场次重算自动化**：process_all.ps1 每轮（非 `-One`）在 exit 分支前
+  重算全部房间 sessions.json——场次缓存永不再 stale；纯重算无 LLM（429 长退避占
+  run.lock 风险排除），场级总结仍由面板/手动触发。
+- **docs**：README 现状快照刷新（09-05：3 房间 25 段/供应商架构/Clash 已退出）；
+  路线图勾选终验离线部分与可见性修复；session.py/runbook `--summarize` 用法勘误。
+
 ## 2026-09-05 · 三线审查（模型列表/_fetch/测试修复四提交）+ 遗漏修复
 
 - **fix(P1) 测试隔离**：tests/test_run_lock.py 直接操作真实仓库根 run.lock——计划任务持锁
