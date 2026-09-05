@@ -549,10 +549,26 @@ def summaries_list(query: str = "") -> list:
         if query and query.lower() not in json.dumps(item, ensure_ascii=False).lower():
             continue
         out.append(item)
-    # 修复（用户实锤）：同一场直播的段级总结被场级总结覆盖时，
-    # 隐藏段级条目——总结库只显示"1 场 = 1 条"，不再段级/场级混杂
-    session_rooms = {r["room"] for r in out if r["kind"] == "session"}
-    out = [r for r in out if r["kind"] == "session" or r["room"] not in session_rooms]
+    # 修复（用户实锤）：同一场直播的段级总结被场级总结覆盖时，隐藏段级条目——
+    # 总结库只显示"1 场 = 1 条"。2026-09-05 二次实锤：原实现是"房间级"隐藏
+    # （同房间存在任意场级总结就吞掉全部段级），sessions.json stale 时 14323359 的
+    # 15 条段级总结整库隐身。现按"有场级总结文件的场次所列段"精确隐藏（收敛回本注释
+    # 的原始语义）；sessions.json 缺失/损坏时 fail-open 全部可见。隐藏≠删除：
+    # 直接 URL 仍可经 find_summary 访问。
+    covered: dict[str, set] = {}
+    for room in {r["room"] for r in out if r["kind"] == "session"}:
+        try:
+            data = json.loads((VIDEOS / room / "_sessions" / "sessions.json")
+                              .read_text(encoding="utf-8"))
+            for sess in data.get("sessions", []):
+                if not (VIDEOS / room / "_sessions" / f"{sess.get('id')}.summary.md").exists():
+                    continue   # 覆盖集以场级 summary 文件存在为准，光有场次记录不算
+                covered.setdefault(room, set()).update(
+                    Path(s["name"]).stem for s in sess.get("segments", []) if s.get("name"))
+        except Exception as e:
+            print(f"[summaries] {room} sessions.json 读取失败，该房间段级按可见处理: "
+                  f"{repr(e)[:120]}", flush=True)
+    out = [r for r in out if r["kind"] == "session" or r["base"] not in covered.get(r["room"], set())]
     # 场次排前排
     out.sort(key=lambda r: (0 if r["kind"] == "session" else 1,
                             0 if r["kind"] == "session" else -time.mktime(
