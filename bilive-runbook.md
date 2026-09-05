@@ -104,7 +104,7 @@ docker run -itd --name bilive_docker --restart unless-stopped \
 ## 5.8 运行记录与已知修复
 
 - **2026-08-22 晚**：批量管线自动消化积压中（计划任务首跑即触发）。深度检查发现并修复：summarize_host.py 重写时漏 `import urllib.request` → 14-08 段总结三连败；已修复并补跑成功。教训：**重写文件后必须 py_compile + 冒烟一次真实调用**。
-- 环境变量注意：用户级 OPENROUTER_API_KEY 对"已存在的父进程树"不生效，新开的计划任务/新终端可见；手动测试时内联 `$env:OPENROUTER_API_KEY=...`。
+- 环境变量注意：用户级 OPENROUTER_API_KEY 对"已存在的父进程树"不生效，新开的计划任务/新终端可见；手动测试时内联 `$env:OPENROUTER_API_KEY=...`。（2026-09-05 起首选设置页「AI 供应商」provider.json，面板改完即全链路生效，无进程树可见性问题）
 - 转写速度实测（small/int8，本机）：30 分钟段 ≈ 11 分钟（2.7x）；孤儿 flv 可直接转写。
 
 ## 5.8 面板 v3（任务队列 + 录制页）
@@ -206,7 +206,7 @@ docker exec bilive_docker bash -c "ffmpeg -y -v error -f lavfi -i testsrc=size=3
 # 4) 验证产物：selftest_001.srt 含 [无语音内容]；selftest_001.summary.md 为占位说明
 
 # 5) 总结路径（真实 API，约 20~60s）：造含真实内容的 srt →
-#    $env:OPENROUTER_API_KEY=(reg query HKCU\Environment /v OPENROUTER_API_KEY | Select-String REG_SZ) -split 'REG_SZ')[-1].Trim()
+#    前提：设置页「AI 供应商」已配 key（或 env/api_key.txt 有 legacy key）
 #    python summarize_host.py <srt>   → 验证五段结构 → python qa_check.py <srt>
 
 # 6) 清理现场
@@ -268,7 +268,7 @@ python session.py --split 8139918 <ID> <段文件名> # 在该段处强制切分
 - blrec `[space] recycle_records=false`：blrec 不删录像，cleanup.ps1 是唯一删除者
 - `reserve_for_fixing=false`：MOOV 崩溃会删视频，重要场次前临时改 true
 - 转写引擎权重：`models\faster-whisper-small\`（ModelScope 下载；HF/hf-mirror 本网络不可达）
-- OpenRouter key 在用户环境变量 OPENROUTER_API_KEY（源码零硬编码）
+- LLM key 双链同源（provider_config.py，2026-09-05 起）：provider.json（设置页，含端点/模型）> env OPENROUTER_API_KEY（历史名，泛指 LLM key）> api_key.txt > 注册表；legacy key 时端点/模型同步回退 OpenRouter，绝不混搭（key 与端点不同源必 401）
 - 已知坑：ps1 必须 UTF-8 BOM（WinPS 中文）；schtasks 内嵌引号会坏→用 Register-ScheduledTask
 
 - `bilibili_transcribe.py`：旁路 srt 转写（groq/local）+ LLM 总结，幂等，支持目录递归
@@ -283,21 +283,27 @@ python session.py --split 8139918 <ID> <段文件名> # 在该段处强制切分
       （faster-whisper small/int8，实测30分钟音频→10.9分钟，2.74x实时）
 权重来源: ModelScope（HF/hf-mirror 在本网络不可达），已存 models\faster-whisper-small\
 总结: python summarize_host.py <srt>   → 同目录 .summary.md
-      （OpenRouter stealth/ox-alpha；⚠️推理模型：max_tokens≥16000 且 reasoning effort=low，
-        否则 token 全被思考吃光 content=null；实测30min段 58s 出稿 24926 tokens）
+      （供应商走 provider_config 双链：设置页 provider.json 优先（new-api 中继，OpenAI 兼容）；
+        provider.json 无 key 时回退 legacy=OpenRouter stealth/ox-alpha。max_tokens≥16000，
+        content=null 且 finish=length 时自动提上限重试；原 reasoning effort=low 参数已随供应商化移除）
 ```
 实测成果（13-31 分段）：858 条字幕 srt + 结构化总结（识别出 BB vs Nigma 赛事、英雄/装备/金句全对）
 
-### 模型配置（两个 LLM 通道）
+### 模型配置（AI 供应商通道）
 
-**① OpenRouter（已验证可用）** —— OpenAI 兼容：
+**主通道：设置页「AI 供应商」（provider.json，OpenAI 兼容）** —— 面板 → 设置页 →
+Base URL / API Key / 模型列表 / 当前生效模型，保存即全链路生效（面板/批处理/场次总结同口径，
+key 与端点/模型同源解析）。测试按钮发最小 chat 请求回显延迟/错误；HTTP 200 但无 choices
+或带 error 判失败。key 仅回显尾部 6 字符。
+
+**legacy 通道（provider.json 无 key 时自动整套接管）** —— OpenRouter（已验证可用）：
 ```python
 url = "https://openrouter.ai/api/v1/chat/completions"
 headers = {"Authorization": "Bearer sk-or-v1-...", "Content-Type": "application/json"}
 body = {"model": "stealth/ox-alpha", "max_tokens": 2000,   # 推理模型！必须给足 max_tokens
         "messages": [{"role": "user", "content": prompt}]}
 ```
-⚠️ ox-alpha 是推理模型：max_tokens 太小会被思考吃光导致空回复。
+⚠️ ox-alpha 是推理模型：max_tokens 太小会被思考吃光导致空回复（call_llm 已有提上限重试兜底）。
 
 **② 本地网关 http://localhost:8081（当前上游 502，待其恢复）**
 - 容器内访问须用 `http://host.docker.internal:8081`（localhost 指向容器自身）
@@ -350,14 +356,15 @@ broadcast-live-tools/
 ├── status.ps1                 # 监控：容器/DNS劫持/磁盘/积压；红牌落盘 alert.log（30分钟节流）
 ├── verify.ps1                 # ⚡一键回归门禁（改码后必跑）：py编译/ps解析/BOM/产物/toml/面板冒烟
 ├── transcribe_host.py         # faster-whisper small 转写（宿主，2.7x 实时；支持多视频单次加载）
-├── summarize_host.py          # OpenRouter ox-alpha 总结（429 长退避；按房间自动选提示词；retry对账）
+├── summarize_host.py          # AI 总结（供应商走 provider_config；429 长退避；按房间选提示词；retry对账）
+├── provider_config.py         # AI 供应商统一配置（provider.json 读写 / 双链 key 解析 / 连通测试；设置页可配）
 ├── prompt.txt                 # 全局总结提示词（DOTA2 游戏向）
 ├── prompt.1883948055.txt      # 房间专属提示词示例（财经向；可按房间号复制扩展）
 ├── session.py                 # 场次聚合与整场总结（聚类/缓存/场级LLM总结/CLI纠错；详见 §5.99）
 ├── notify.ps1                 # 轻量通知：Windows Toast + notify.log（30分钟节流，四类事件已接线）
 ├── backup_metadata.ps1        # 元数据备份（bilive-backup 每日10:00；robocopy 增量不删历史）
 ├── selftest.ps1               # ⚡端到端自测一键化（合成静音视频驱动全链路六步断言，不耗API）
-├── tests\test_merge_archived.py  # 归档回填幂等回归单测（verify.ps1 调用）
+├── tests\                     # 纯逻辑回归单测（verify.ps1 调用）：merge_archived / provider_config
 ├── qa_check.py                # 质量验收（幻觉/重复/巨块/编码/五段结构/时间戳）
 ├── report_gen.py              # 全量复盘 REPORT.md（含已归档分段溯源）
 ├── bilive-runbook.md          # 本文档（权威排障手册）
@@ -368,7 +375,7 @@ broadcast-live-tools/
 ├── REPORT.md                  # 生成数据：全量分段复盘表（report_gen.py 刷新，含场次视图）
 ├── models/                    # faster-whisper-small 权重（gitignored）
 ├── logs/                      # 流水线/面板/告警日志（gitignored，流水线14天轮转）
-└── .gitignore                 # Videos/logs/models/settings.toml/retry/run.lock/queue.json 等
+└── .gitignore                 # Videos/logs/models/settings.toml/provider.json(含key)/api_key.txt/.claude 等
 ```
 
 ## 11. 已注册的计划任务

@@ -14,7 +14,7 @@ B站直播 ──► Docker 容器 bilive_docker (blrec, WBI修复版)
    ┌──────────┴────────── 宿主机（计划任务每30分钟，run.lock 互斥）──────────┐
    │ process_all.ps1：两阶段批处理                                          │
    │   ① transcribe_host.py  faster-whisper small/int8 → .srt（模型单次加载）│
-   │   ② summarize_host.py   OpenRouter ox-alpha → .summary.md              │
+   │   ② summarize_host.py   AI 总结（供应商=设置页 provider.json）→ .summary.md │
    │      （提示词按房间自动选择：prompt.<房间号>.txt > prompt.txt > 内置）  │
    └────────────────────────────────────────────────────────────────────────┘
               │

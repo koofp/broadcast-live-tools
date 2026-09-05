@@ -3,6 +3,43 @@
 > 变更史。新变更记录到这里（按日期倒序），runbook 只保留"当前状态"不再堆时序日志。
 > 格式参考 Keep a Changelog；提交号可 `git show <hash>` 查看全文。
 
+## 2026-09-05 · AI 供应商设置页（provider.json）+ 全链路口径统一（经三线审查修复）
+
+- **feat(provider)**：设置页新增「AI 供应商」卡片——Base URL / API Key（仅尾部回显）/ 模型列表
+  增删 / 当前生效模型 / 连通测试，配置落 `provider.json`（gitignored，绝不入库）。新增
+  `provider_config.py` 统一层与 `GET/POST /api/provider`、`POST /api/provider/test` 端点；
+  summarize_host / session / 面板三处重复的 get_api_key 收敛为同一 `resolve()`。
+  key 解析**双链同源**：provider.json 有 key → 整套走 provider.json（含端点/模型）；
+  否则 legacy 整套接管（env OPENROUTER_API_KEY > api_key.txt > 注册表 + OpenRouter
+  stealth/ox-alpha）——key 与端点绝不混搭（OpenRouter key 打到 new-api 中继必 401）。
+  summarize_host 的 call_oxalpha 重构为通用 `call_llm()`（自定义 model/chat_url/max_tokens；
+  think 模型 content=null 且 finish=length 时自动提上限重试；原 `reasoning effort=low`
+  参数随供应商化移除）。
+- **fix(review) 三线并行审查（代码/计划复盘/架构）后修复**：
+  ① `/api/provider` 入口严检——models 非字符串元素/空列表 → 400（原会 500 AttributeError
+  或被 `_normalize` 静默重置默认还提示已保存）；
+  ② 面板新增本机防护中间件——非 127.0.0.1/localhost 的 Host 一律 403（防 DNS rebinding），
+  写方法带跨站 Origin 拦截（防 CSRF：/api/provider 可改写 key 去向=密钥外泄跳板）；
+  ③ `provider_test` 空参数回退 `resolve()`——测试按钮与真实总结链路同源（原只读
+  provider.json，legacy 用户测试误报未配 key）；
+  ④ readiness 的 API key 来源按真实解析链显示（原 provider.json 场景误显示 api_key.txt，
+  注册表场景显示空来源）；
+  ⑤ 面板 Worker 不再注入 key 快照（原 `_worker_env_cache` 冻结首任务时的 key，设置页
+  改 key 后子进程仍用旧值直至重启面板）；子进程统一经 provider_config 自解析；
+  ⑥ tasklist/reg query 子进程补 `errors="replace"`——GBK 输出遇 PYTHONUTF8=1 在 reader
+  线程解码崩溃 → readiness Clash 检测恒假绿"已退出"、注册表 key 回退静默失效（实测复现）；
+  ⑦ `test_model` 对 HTTP 200 无 choices / 带 error 的响应判失败（原判成功=假阳性，
+  部分 new-api 系中继配额不足时返回 200+error）；
+  ⑧ provider.json 损坏时先改名 `.json.bad` 留档再落默认骨架（原静默覆盖，key 无法抢救）；
+  load/save 加锁防并发丢更新；
+  ⑨ 设置页删除与供应商卡片矛盾的旧 key 展示行（单一事实来源），徽章带 key 来源标注。
+- **test**：verify.ps1 py_compile 白名单补 `provider_config.py`（此前该 untracked 模块是
+  门禁盲区）；新增 `tests/test_provider_config.py`（双链解析/base_url 三种填法规整/
+  normalize 边界/test_model 防假阳性/损坏留档，隔离真实配置无网络）。
+- **docs**：README 架构图、runbook §5.5/§5.7/§5.8/§5.98/§10 供应商口径同步（OpenRouter
+  ox-alpha → 双链描述）；backup_metadata.ps1 备份清单纳入 provider.json/api_key.txt；
+  .gitignore 补 .claude/.codex（AionUi 本地脚手架符号链接）。
+
 ## 2026-08-25 · 终审修复（就绪检查/密钥回退/移除同步blrec/清理）
 
 - **feat(dashboard) `ab523cf`**：仪表盘新增全流程就绪检查卡片（七项逐条✓/✗，60秒自动刷新+手动刷新按钮）；`/api/readiness` 端点；cookie 正则修正（值含转义引号时 `[^"]` 截断→MULTILINE 行匹配）；verify.ps1 面板未运行改自动拉起+FAIL 策略。
