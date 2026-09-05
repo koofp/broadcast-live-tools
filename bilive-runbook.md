@@ -270,6 +270,7 @@ python session.py --split 8139918 <ID> <段文件名> # 在该段处强制切分
 - 转写引擎权重：`models\faster-whisper-small\`（ModelScope 下载；HF/hf-mirror 本网络不可达）
 - LLM key 双链同源（provider_config.py，2026-09-05 起）：provider.json（设置页，含端点/模型）> env OPENROUTER_API_KEY（历史名，泛指 LLM key）> api_key.txt > 注册表；legacy key 时端点/模型同步回退 OpenRouter，绝不混搭（key 与端点不同源必 401）
 - 已知坑：ps1 必须 UTF-8 BOM（WinPS 中文）；schtasks 内嵌引号会坏→用 Register-ScheduledTask
+- LLM 中继 TLS EOF（`SSL: UNEXPECTED_EOF_WHILE_READING`）：Clash TUN(fake-ip) 下用户态无法绕过（DNS 全被劫持成 198.18.x.x），先看浏览器能否打开该站——能开=Clash 分流到坏节点，给域名加 DIRECT 规则或换节点；不能开=中继服务故障。对照：bilibili/baidu 正常+仅中继失败=分流问题（2026-09-05 实锤）
 
 - `bilibili_transcribe.py`：旁路 srt 转写（groq/local）+ LLM 总结，幂等，支持目录递归
 - `bilive-unlock-check.ps1`：换号/换出口一键验证+重配

@@ -137,17 +137,58 @@ def test_models_url_and_list_models():
         pc.urllib.request.urlopen = real_urlopen
 
 
+def test_fetch_fallback():
+    """网络级错误 → 无代理直连重试；HTTPError 不重试直接上抛；全败附 Clash 提示。"""
+    real_urlopen, real_direct, real_hosts = pc.urllib.request.urlopen, pc._DIRECT_OPENER, set(pc._HOST_DIRECT)
+    pc._HOST_DIRECT.clear()
+    try:
+        # ① 默认 opener 网络错误、直连成功 → via=直连 且主机被记住
+        pc.urllib.request.urlopen = lambda *a, **k: (_ for _ in ()).throw(
+            __import__("urllib.error", fromlist=["URLError"]).URLError("proxy dead"))
+        class _OkOpener:
+            def __init__(self): self.calls = 0
+            def open(self, req, timeout): self.calls += 1; return io.BytesIO(b"direct-ok")
+        ok = _OkOpener(); pc._DIRECT_OPENER = ok
+        body, via = pc._fetch("https://x.example/v1", None, {}, 5)
+        assert body == b"direct-ok" and via == "直连" and ok.calls == 1
+        # ② 已学过的主机跳过代理尝试
+        body2, via2 = pc._fetch("https://x.example/v1", None, {}, 5)
+        assert via2 == "直连" and ok.calls == 2
+        # ③ 两级全败 → RuntimeError 且信息含 Clash 排障提示
+        pc._DIRECT_OPENER = type("F", (), {"open": lambda self, r, timeout: (_ for _ in ()).throw(
+            OSError("eof"))})()
+        try:
+            pc._fetch("https://y.example/v1", None, {}, 5)
+            assert False, "应抛 RuntimeError"
+        except RuntimeError as e:
+            assert "Clash" in str(e) and "DIRECT" in str(e)
+        # ④ HTTPError（已拿到服务端响应）不重试，原样上抛
+        import urllib.error as _ue
+        def _raise_http(*a, **k):
+            raise _ue.HTTPError("u", 503, "x", {}, io.BytesIO(b"svc"))
+        pc.urllib.request.urlopen = _raise_http
+        try:
+            pc._fetch("https://z.example/v1", None, {}, 5)
+            assert False, "HTTPError 应上抛"
+        except _ue.HTTPError:
+            pass
+    finally:
+        pc.urllib.request.urlopen, pc._DIRECT_OPENER = real_urlopen, real_direct
+        pc._HOST_DIRECT.clear(); pc._HOST_DIRECT.update(real_hosts)
+
+
 def run() -> bool:
     test_resolve_chat_url()
     test_normalize()
     test_resolve_dual_chain()
     test_test_model_no_false_positive()
     test_models_url_and_list_models()
+    test_fetch_fallback()
     test_load_save_roundtrip_and_corrupt()
     return True
 
 
 if __name__ == "__main__":
     run()
-    print("[PASS] provider_config 回归（双链/base_url规整/normalize/test_model防假阳性/模型列表/损坏留档）")
+    print("[PASS] provider_config 回归（双链/base_url规整/normalize/test_model防假阳性/模型列表/直连回退/损坏留档）")
     sys.exit(0)

@@ -18,6 +18,7 @@ import subprocess
 import threading
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from pathlib import Path
 
@@ -39,6 +40,42 @@ LEGACY_BASE_URL = "https://openrouter.ai/api"
 LEGACY_MODEL = "stealth/ox-alpha"
 
 _LOCK = threading.RLock()   # load 播种 / save 读改写互斥（load 会调 save，需可重入）
+
+# ---- 请求层：默认 opener（读系统代理）失败 → 无代理直连重试一次 ----
+# 背景：urlopen 会把首次请求时的系统代理缓存进全局 opener（services.py 有同款教训：
+# Clash 死端口 7897 被缓存后所有请求永久失败）。中继类域名在纯系统代理（非 TUN）环境
+# 下，代理挂了直连通——回退可自愈；Clash TUN(fake-ip) 模式下直连也会被截流，无法绕过，
+# 此时错误信息必须指向 Clash 分流，而不是让人怀疑代码。
+_DIRECT_OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+_HOST_DIRECT: set[str] = set()   # 已确认"只能直连"的主机，后续跳过代理尝试
+_SSL_HINT = ("TLS 在握手阶段被中断。本机若在 Clash TUN(fake-ip) 环境（DNS 返回 198.18.x.x），"
+             "用户态无法绕过，需在 Clash 里为该域名加 DIRECT 规则或换可用节点；"
+             "若浏览器也打不开该站点，则是中继服务本身故障。")
+
+
+def _fetch(url: str, data: bytes | None, headers: dict, timeout: int) -> tuple[bytes, str]:
+    """带直连回退的 HTTP 请求。返回 (body, via="默认"|"直连")。
+    HTTPError（4xx/5xx=已拿到服务端响应）原样抛出，交调用方按状态处理；
+    网络级错误（SSL/连接/超时）两级尝试后抛 RuntimeError（附排障提示）。"""
+    host = urllib.parse.urlsplit(url).netloc
+    plans = [("直连", _DIRECT_OPENER)] if host in _HOST_DIRECT else \
+            [("默认", None), ("直连", _DIRECT_OPENER)]
+    last: Exception | None = None
+    for name, opener in plans:
+        try:
+            req = urllib.request.Request(url, data=data, headers=headers)
+            if opener is None:
+                raw = urllib.request.urlopen(req, timeout=timeout).read()
+            else:
+                raw = opener.open(req, timeout=timeout).read()
+            if name == "直连":
+                _HOST_DIRECT.add(host)
+            return raw, name
+        except urllib.error.HTTPError:
+            raise
+        except Exception as e:
+            last = e
+    raise RuntimeError(f"{repr(last)[:160]} —— {_SSL_HINT}")
 
 
 def _legacy_key() -> tuple[str, str]:
@@ -139,12 +176,11 @@ def list_models(base_url: str, api_key: str, timeout: int = 30) -> dict:
     key = (api_key or "").strip()
     if not key:
         return {"ok": False, "models": [], "latency_ms": 0, "error": "未填写 API key"}
-    req = urllib.request.Request(url, headers={"Authorization": "Bearer " + key})
     t0 = time.time()
     try:
-        raw = urllib.request.urlopen(req, timeout=timeout).read().decode("utf-8", "ignore")
+        raw, _via = _fetch(url, None, {"Authorization": "Bearer " + key}, timeout)
         latency = int((time.time() - t0) * 1000)
-        d = json.loads(raw)
+        d = json.loads(raw.decode("utf-8", "ignore"))
         data = d.get("data") if isinstance(d, dict) else None
         ids = sorted({m.get("id").strip() for m in (data or [])
                       if isinstance(m, dict) and isinstance(m.get("id"), str) and m.get("id").strip()})
@@ -204,14 +240,12 @@ def test_model(base_url: str, api_key: str, model: str, timeout: int = 90) -> di
         "max_tokens": 64,
         "messages": [{"role": "user", "content": "ping"}],
     }).encode()
-    req = urllib.request.Request(
-        chat_url, data=body,
-        headers={"Authorization": "Bearer " + key, "Content-Type": "application/json"})
+    headers = {"Authorization": "Bearer " + key, "Content-Type": "application/json"}
     t0 = time.time()
     try:
-        raw = urllib.request.urlopen(req, timeout=timeout).read().decode("utf-8", "ignore")
+        raw, _via = _fetch(chat_url, body, headers, timeout)
         latency = int((time.time() - t0) * 1000)
-        d = json.loads(raw)
+        d = json.loads(raw.decode("utf-8", "ignore"))
         if "choices" in d and d["choices"]:
             msg = d["choices"][0].get("message", {}) or {}
             content = msg.get("content") or ""

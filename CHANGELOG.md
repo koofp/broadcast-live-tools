@@ -3,6 +3,18 @@
 > 变更史。新变更记录到这里（按日期倒序），runbook 只保留"当前状态"不再堆时序日志。
 > 格式参考 Keep a Changelog；提交号可 `git show <hash>` 查看全文。
 
+## 2026-09-05 · LLM 请求层统一 _fetch（直连回退 + Clash TUN 排障提示）
+
+- **fix(provider)**：设置页「测试当前模型」报 `SSLEOFError`——现场取证定位：Clash TUN
+  fake-ip 劫持全部 DNS（223.5.5.5 也返回 198.18.x.x，用户态无法绕过），Clash 本身健康
+  （bilibili 148ms/baidu 119ms），唯独 new-api.abrdns.com 被分流到故障去向（节点/规则问题，
+  30 分钟前同路径实测正常）。代码侧修复：provider_config 新增统一请求层 `_fetch`——
+  默认 opener（读系统代理）网络级失败 → 无代理直连重试一次（纯系统代理环境下 Clash 挂掉
+  可自愈，主机级记忆避免重复尝试；HTTPError=已拿到服务端响应不重试）；两级全败抛出的错误
+  附 Clash 分流排障提示（fake-ip 特征/加 DIRECT 规则/换节点/浏览器判活），设置页测试按钮、
+  summarize_host._chat、list_models 三处收口同口径。TUN 环境下仍无法绕过（需用户改 Clash），
+  但报错从裸异常变为可诊断。
+
 ## 2026-09-05 · 模型列表在线获取 + 切换 DeepSeek-V4-Pro-0813-think（ox 失效）
 
 - **feat(provider)**：设置页新增「⤓ 获取模型列表」按钮——`POST /api/provider/models` 走

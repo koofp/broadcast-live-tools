@@ -39,11 +39,10 @@ def _chat(prompt, key, model, chat_url, max_tokens):
         "max_tokens": max_tokens,
         "messages": [{"role": "user", "content": prompt}],
     }).encode()
-    req = urllib.request.Request(
-        chat_url, data=body,
-        headers={"Authorization": "Bearer " + key, "Content-Type": "application/json"})
-    raw = urllib.request.urlopen(req, timeout=900).read().decode("utf-8", "ignore")
-    d = json.loads(raw)
+    headers = {"Authorization": "Bearer " + key, "Content-Type": "application/json"}
+    # _fetch：默认 opener 失败自动直连重试，网络级错误附 Clash 排障提示（与设置页同口径）
+    raw = provider_config._fetch(chat_url, body, headers, timeout=900)[0]
+    d = json.loads(raw.decode("utf-8", "ignore"))
     choice = d["choices"][0]
     msg = choice.get("message", {}) or {}
     return (msg.get("content") or "", choice.get("finish_reason"),
