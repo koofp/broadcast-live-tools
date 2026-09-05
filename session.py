@@ -208,20 +208,6 @@ def build_room(room: str, gap_min: float) -> dict:
 
 
 # ---------- 场级总结 ----------
-def one_liner(p: Path) -> str:
-    try:
-        t = p.read_text(encoding="utf-8", errors="ignore")
-    except Exception:
-        return ""
-    m = re.search(r"##\s*一句话总结\s*\n+(.+)", t)
-    if m and m.group(1).strip():
-        return m.group(1).strip().splitlines()[0][:80]
-    for ln in t.splitlines():
-        if ln.strip() and not ln.startswith("#"):
-            return ln.strip()[:80]
-    return ""
-
-
 def summary_path(room: str, sid: str) -> Path:
     return VIDEOS / room / "_sessions" / f"{sid}.summary.md"
 
@@ -238,17 +224,24 @@ def summary_state(session: dict) -> tuple[str, Path]:
 
 
 def gather_summaries(session: dict) -> str:
+    """场级总结的输入：各段完整总结全文（2026-09-05 升级——原只喂每段一句话，
+    产不出"15 分钟详读"级别的深度；单段截断 2500 字防 24 段长场输入爆炸）。"""
     room_dir = VIDEOS / session["room"]
     lines = []
     for seg in session["segments"]:
         hhmm = seg["start"][11:16]
         if seg.get("archived"):
-            lines.append(f"[{hhmm}] （该段已归档清理，内容含于场级叙事中）")
+            lines.append(f"### [{hhmm}] {Path(seg['name']).stem}（该段已归档清理，内容含于场级叙事中）")
             continue
         sp = room_dir / (Path(seg["name"]).stem + ".summary.md")
-        ol = one_liner(sp) if sp.exists() else "（无逐段总结）"
-        lines.append(f"[{hhmm}] {ol}")
-    return "\n".join(lines)
+        if not sp.exists():
+            lines.append(f"### [{hhmm}] {Path(seg['name']).stem}（无逐段总结）")
+            continue
+        txt = sp.read_text(encoding="utf-8", errors="ignore").strip()
+        if len(txt) > 2500:
+            txt = txt[:2500] + "\n…(该段截断)"
+        lines.append(f"### [{hhmm}] {Path(seg['name']).stem}\n{txt}")
+    return "\n\n".join(lines)
 
 
 def load_prompt_session(room: str) -> str:
@@ -262,7 +255,7 @@ def load_prompt_session(room: str) -> str:
     return DEFAULT_SESSION_PROMPT
 
 
-DEFAULT_SESSION_PROMPT = """你是资深直播内容分析师。下面是一场直播中各时间段的逐段总结（按时间顺序）。
+DEFAULT_SESSION_PROMPT = """你是资深直播内容分析师。下面是一场直播中各时间段的逐段完整总结（按时间顺序）。
 请站在整场视角做二级总结：跨段提炼主线，不要复述单段细节。
 
 各段总结：
@@ -302,6 +295,56 @@ def call_with_retry(prompt: str, key: str) -> str:
     raise RuntimeError(f"LLM 调用失败: {last}")
 
 
+# 必需小节（下游依赖：report_gen 提取 一句话总结/关键要点/高光时刻；
+# 总结库 one_liner 提取 一句话总结）。模型输出经校验+补全后按此序组装。
+SESSION_SECTIONS = ["一句话总结", "五分钟重点", "十五分钟详读", "关键要点",
+                    "高光时刻", "金句精选", "预测记分卡", "新黑话捕获"]
+
+
+def _split_sections(text: str) -> dict:
+    """按 '## 标题' 切分模型输出为 {标题: 内容}（'###' 及以下归属当前节）。"""
+    secs, cur, buf = {}, None, []
+    for ln in text.splitlines():
+        m = re.match(r"^##\s+(.+?)\s*$", ln)
+        if m:
+            if cur:
+                secs.setdefault(cur, "\n".join(buf).strip())
+            cur, buf = m.group(1).strip(), []
+        elif cur is not None:
+            buf.append(ln)
+    if cur:
+        secs.setdefault(cur, "\n".join(buf).strip())
+    return secs
+
+
+def _demote_h1(text: str) -> str:
+    """模型常不守 '### 小标题' 指令而用 '# 阶段'——渲染成巨大标题，统一降级为 ###。"""
+    return re.sub(r"(?m)^# (?!#)", "### ", text)
+
+
+def _assemble_sections(text: str, prompt: str, key: str) -> str:
+    """校验必需小节 → 缺失时追加一次补全调用 → 按规范顺序组装（think 模型对
+    长结构化输出的遵从度不稳定，实测同一提示词一次 8/9 节、一次只剩详读）。"""
+    secs = _split_sections(text)
+    missing = [s for s in SESSION_SECTIONS if s not in secs]
+    if missing:
+        print(f"[repair] 缺失小节: {'、'.join(missing)} → 追加补全调用", flush=True)
+        repair = (prompt + "\n\n【补全指令】刚才的输出遗漏了以下小节："
+                  + "、".join(missing)
+                  + "。请只输出这些缺失小节，标题逐字使用上面给定的名称并按顺序，"
+                    "不要重复输出其他小节，不要输出任何开场白。")
+        text2 = call_with_retry(repair, key)
+        for k, v in _split_sections(_demote_h1(text2)).items():
+            secs.setdefault(k, v)
+    if "十五分钟详读" in secs:
+        secs["十五分钟详读"] = _demote_h1(secs["十五分钟详读"])
+    parts = [f"## {name}\n\n{secs[name]}" for name in SESSION_SECTIONS
+             if secs.get(name)]
+    extras = [f"## {k}\n\n{v}" for k, v in secs.items()
+              if k not in SESSION_SECTIONS and v]
+    return "\n\n".join(parts + extras)
+
+
 def gen_session_summary(session: dict, key: str, force: bool) -> bool:
     state, p = summary_state(session)
     if state == "ok" and not force:
@@ -320,7 +363,7 @@ def gen_session_summary(session: dict, key: str, force: bool) -> bool:
     tpl = load_prompt_session(session["room"])
     prompt = tpl.replace("{summaries}", gather_summaries(session))
     print(f"[session] 生成场级总结 {session['id']}（{len(live_segs)} 段）…", flush=True)
-    text = call_with_retry(prompt, key)
+    text = _assemble_sections(call_with_retry(prompt, key), prompt, key)
     dur_h = (datetime.strptime(session["end_est"], "%Y-%m-%d %H:%M:%S")
              - datetime.strptime(session["start"], "%Y-%m-%d %H:%M:%S")).total_seconds() / 3600
     title = session.get("title") or ""
