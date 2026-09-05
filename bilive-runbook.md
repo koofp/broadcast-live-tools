@@ -216,6 +216,28 @@ Remove-Item '.\bilive-docker\Videos\_selftest' -Recurse -Force
 **本 SOP 首战战果**：揪出 WinPS GBK 占位符匹配 bug（§5.96 后仍潜伏，见 e7c151a）——
 实测能抓到评审抓不到的编码类故障。
 
+### 5.98.1 增补演练法（2026-09-05 实战沉淀）
+
+**① 真实数据副本法（零删除）**：把真实房间的 srt 拷进 `Videos/_selftest/`（配 8s 假 mp4
+占位命名），对副本跑 summarize/qa_check/场次总结——覆盖面与真数据一致且永不碰生产产物；
+结束后删 `_selftest` + `python report_gen.py` 回基线。**禁止"删真实 summary 再重跑"**。
+
+**② 锁三 drill**：PowerShell 持 run.lock 跑 `process_all.ps1` → exit 3（竞争退避）；
+持锁加 `-Force` → 强抢日志（对"句柄未释放"的持锁者移除失败属正确行为）；面板处理中
+taskkill → 重启 → 队列 running 自动 requeue → done（断电恢复）。
+Python 侧锁 = `CreateFileW share=0` 真独占（services.py），与 PS FileStream 互认，
+回归钉在 `tests/test_run_lock.py`。
+
+**③ 测试记录落盘惯例**：演练结论（PASS/FAIL/覆盖缺口）记 CHANGELOG 对应日条目；
+抓出的 bug → 修复 + tests/ 单测固化。未落盘的"已通过"视为无效。
+
+**2026-09-05 执行快照**：selftest 六步 PASS；真实副本×3 过 DeepSeek-V4-Pro-0813-think
+（qa_check PASS，单段 116~181s）；LLM 失败路径 401/不可达/429 退避 60s 符合预期；
+面板七页 200；cleanup 冒烟（磁盘充足 + 锁重试实测）。**覆盖缺口**：真实开播检测延迟、
+600s 轮询兜底、cleanup 全路径（磁盘充足不可达）、场次自然关闭（--force 等效覆盖）。
+抓出并修复 3 bug：think 提额条件、tmp 竞争、run.lock 误删活锁（P1，见 CHANGELOG）。
+录制腿（真实开播 5-10 分钟）待用户提供直播流后按评审定稿执行。
+
 **测试管道坑**（伪影，非产品问题）：
 - 内联 `python -c "…中文…"` 的字面量会被 GBK 传参搅碎 → 断言请写临时 .py 文件
 - `python … | Select-Object -First N` 会掐杀上游进程（exit 变 -1）→ 看全量输出别截断
@@ -297,11 +319,14 @@ Base URL / API Key / 模型列表 / 当前生效模型，保存即全链路生�
 key 与端点/模型同源解析）。模型列表可点「⤓ 获取模型列表」在线拉取（`GET /v1/models`），
 也可手动输入；测试按钮发最小 chat 请求回显延迟/错误；HTTP 200 但无 choices 或带 error
 判失败。key 仅回显尾部 6 字符。当前生效：new-api 中继 + `DeepSeek-V4-Pro-0813-think`
-（2026-09-05 实测 2.9s/pong；中继 /v1/models 共 21 个模型，已全量入 provider.json 下拉）。
+（中继 /v1/models 共 21 个模型，已全量入 provider.json 下拉）。
+⚠️ 耗时口径：测试按钮 2.9s 是 max_tokens=64 的 ping 指标；**真实长输入**（60KB 字幕）
+think 模型先烧满 16K 再自动提额 64K，实测 116~181s/段（2026-09-05），排期按分钟计不要按秒计。
 
 **legacy 通道（provider.json 无 key 时自动整套接管）** —— OpenRouter（机制保留；
-⚠️ 默认模型 stealth/ox-alpha **2026-09-05 实锤已失效**，legacy 链不再是可靠回退，
-应在设置页把 key 配进 provider.json）：
+⚠️ 默认模型 stealth/ox-alpha **2026-09-05 实锤已失效**：resolve() 会带 model_deprecated
+标记 → 批处理日志打 `[warn]`、设置页红标提示；provider.json 损坏自愈（.json.bad+空骨架）
+后会静默落 legacy，看到红标即去设置页重配 key）:
 ```python
 url = "https://openrouter.ai/api/v1/chat/completions"
 headers = {"Authorization": "Bearer sk-or-v1-...", "Content-Type": "application/json"}

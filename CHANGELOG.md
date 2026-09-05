@@ -3,6 +3,31 @@
 > 变更史。新变更记录到这里（按日期倒序），runbook 只保留"当前状态"不再堆时序日志。
 > 格式参考 Keep a Changelog；提交号可 `git show <hash>` 查看全文。
 
+## 2026-09-05 · 三线审查（模型列表/_fetch/测试修复四提交）+ 遗漏修复
+
+- **fix(P1) 测试隔离**：tests/test_run_lock.py 直接操作真实仓库根 run.lock——计划任务持锁
+  时 verify 必假失败，且测试会清掉运维现场的陈旧锁。改 monkeypatch `services.LOCK` 到
+  临时目录，产品代码零改动全隔离。
+- **fix(P1) legacy 运行时陷阱**：provider.json 损坏自愈（.json.bad+空骨架）或新 clone 场景
+  会静默落到 legacy 链 → 已失效的 ox 模型 → 总结全失败无提示（队列 j1-j10 failed 残留即
+  真实案例，已清理）。修复：resolve() 带 model_deprecated 标记 → call_llm 打
+  `[warn]` 指引（进程内一次）+ 设置页红标。
+- **fix(P1→P2) 超时分类/锁自愈/直连记忆**：① urlopen 把连接超时包进 URLError(reason)，
+  `isinstance(TimeoutError)` 判定落空 → 解包 reason 判定 + 单测；② acquire 陈旧锁自愈
+  （面板被杀遗留锁文件不再让 Worker 空转）+ Worker defer 2s 退避（防紧循环刷 queue.json）；
+  ③ _HOST_DIRECT 直连失败即清除记忆（防一次性抖动永久锁死直连）。
+- **fix(P2/P3)**：DEFAULT_MODEL 播种占位改为实盘存在的模型 ID（原 "1M" 变体是幽灵模型，
+  provider.json 丢失场景必失败）；list_models 兼容 Ollama 风格 `{"models":[...]}`、
+  无法识别结构报顶层键名（不再误称"中继异常"）；resolve_models_url 防 /models 双拼；
+  排障提示截断 200→400（结论段不再被砍）；_fetch 转正公共名（留 _fetch 别名）；
+  services 的 B站 opener 改名 _BILI_OPENER（与 LLM 回退 opener 消歧义）；
+  WriteFile/CloseHandle 补 argtypes + use_last_error；.gitignore 补 `*.tmp*`；
+  verify 面板冒烟补 /settings 页渲染探测（此前 Jinja 500 探不到）；settings 页拉模型
+  切换 pvActive 时明示（防无意覆盖生效模型）。
+- **docs**：runbook §5.5 修正耗时口径（2.9s 是 ping，长输入 116~181s/段）+ legacy 陷阱
+  运行时警示说明；§5.98 增补 5.98.1（真实数据副本法/锁三 drill/测试记录落盘惯例 +
+  09-05 执行快照与覆盖缺口）。
+
 ## 2026-09-05 · 全链路模拟测试执行 + 三个实测抓出的修复
 
 - **test**：按评审定稿执行可自治部分（子代理对抗评审原方案后定稿：真实数据零删除全走
