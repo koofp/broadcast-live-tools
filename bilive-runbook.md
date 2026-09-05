@@ -21,7 +21,7 @@
 | 检查磁盘/监控 | `status.ps1`（或面板仪表盘）|
 | 改码后回归验证 | `.\verify.ps1`（30秒：py编译/ps解析/BOM/冒烟）|
 | 端到端自测（不耗API） | `.\selftest.ps1`（一键六步断言：造视频→跑批→占位→聚类→报告→清理；方法详见 §5.98）|
-| 场次聚合/整场总结 | `python session.py`（扫描+缓存）；`--summarize 8139918 [场次ID]`（LLM 场级总结）；`--title/--merge/--split` 纠错；详见 §5.99 |
+| 场次聚合/整场总结 | `python session.py`（扫描+缓存）；`--room 8139918 --summarize [场次ID]`（LLM 场级总结）；`--title/--merge/--split` 纠错；详见 §5.99 |
 | 元数据备份 | 每日 10:00 自动（bilive-backup）；手动 `.\backup_metadata.ps1`；详见 §5.100 |
 | 主动告警 | `.\notify.ps1 -Title "..." -Text "..." [-Level bad]`（Windows Toast+notify.log，30分钟节流）|
 | 清理旧分段 | 面板流水线页"归档预览"→"Apply"（或计划任务每日自动）|
@@ -252,8 +252,8 @@ Python 侧锁 = `CreateFileW share=0` 真独占（services.py），与 PS FileSt
 **使用**：
 ```powershell
 python session.py                                # 扫描全部房间，打印场次表并写缓存
-python session.py --summarize 8139918            # 该房间全部"已关闭且缺失/过期"场次的 LLM 场级总结
-python session.py --summarize 8139918 20260823_095436   # 指定场次
+python session.py --room 8139918 --summarize     # 该房间全部"已关闭且缺失/过期"场次的 LLM 场级总结
+python session.py --room 8139918 --summarize 20260823_095436   # 指定场次
 python session.py --title 8139918 20260823_095436 "TI决赛日"     # 命名（面板/报告显示用）
 python session.py --merge 8139918 <ID_A> <ID_B>  # 误切分时手动合并
 python session.py --split 8139918 <ID> <段文件名> # 在该段处强制切分

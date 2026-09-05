@@ -9,7 +9,7 @@
 用法:
   python session.py                                  # 扫描全部房间，打印场次表并写缓存
   python session.py --room 8139918                   # 只看某房间
-  python session.py --summarize 8139918 [场次ID]     # 生成场级总结（缺ID=全部已关闭且过期/缺失的）
+  python session.py --room 8139918 --summarize [场次ID]  # 生成场级总结（缺ID=全部已关闭且过期/缺失的；勿把房间号直接跟在 --summarize 后——会被当作场次ID 静默空转）
   python session.py --title 8139918 <场次ID> "TI决赛日"          # 场次命名
   python session.py --merge 8139918 <ID_A> <ID_B>    # 强制合并两场次
   python session.py --split 8139918 <场次ID> <段文件名>  # 该段起切分为新场次
