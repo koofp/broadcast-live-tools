@@ -54,6 +54,7 @@ def test_resolve_dual_chain():
         assert r["chat_url"] == "https://openrouter.ai/api/v1/chat/completions", \
             f"legacy key 必须配 legacy 端点（OpenRouter 带 /api 前缀），实测 {r['chat_url']}"
         assert r["model"] == pc.LEGACY_MODEL and r["key_source"] == "api_key.txt"
+        assert r["model_deprecated"] is True, "legacy 默认模型已失效，必须带运行时标记"
         # 链③：到处无 key → api_key 为空但结构完整
         pc._legacy_key = lambda: ("", "")
         r = pc.resolve()
@@ -110,6 +111,7 @@ def test_models_url_and_list_models():
         "https://new-api.abrdns.com": "https://new-api.abrdns.com/v1/models",
         "https://x.example/v1": "https://x.example/v1/models",
         "https://x.example/v1/chat/completions": "https://x.example/v1/models",
+        "https://x.example/v1/models": "https://x.example/v1/models",
         "https://openrouter.ai/api": "https://openrouter.ai/api/v1/models",
         "": "https://new-api.abrdns.com/v1/models",
     }
@@ -125,6 +127,14 @@ def test_models_url_and_list_models():
                                    {"id": ""}, "bad-item"]}).encode())
         r = pc.list_models("https://x.example", "k")
         assert r["ok"] is True and r["models"] == ["m1", "m2"], f"去重排序失败: {r}"
+        # 非标结构（Ollama 风格 {"models":[...]}）兼容
+        fake(json.dumps({"models": [{"id": "ollama-1"}]}).encode())
+        r = pc.list_models("https://x.example", "k")
+        assert r["ok"] is True and r["models"] == ["ollama-1"], f"非标结构兼容失败: {r}"
+        # 无法识别的结构 → 报错带顶层键名（非"中继异常"误导）
+        fake(json.dumps({"weird": 1}).encode())
+        r = pc.list_models("https://x.example", "k")
+        assert r["ok"] is False and "weird" in r["error"], f"顶层键未带出: {r}"
         fake(json.dumps({"error": {"message": "invalid token"}}).encode())
         r = pc.list_models("https://x.example", "k")
         assert r["ok"] is False and "invalid token" in r["error"]
@@ -170,6 +180,17 @@ def test_fetch_fallback():
             assert False, "应抛 RuntimeError"
         except RuntimeError as e:
             assert "超时" in str(e) and "Clash" not in str(e)
+        # ③c URLError(reason=TimeoutError)（urlopen 连接阶段超时的真实包装形态）同样判超时
+        import urllib.error as _ue2
+        pc._DIRECT_OPENER = type("U", (), {"open": lambda self, r, timeout: (_ for _ in ()).throw(
+            _ue2.URLError(TimeoutError("timed out")))})()
+        try:
+            pc._fetch("https://u.example/v1", None, {}, 5)
+            assert False, "应抛 RuntimeError"
+        except RuntimeError as e:
+            assert "超时" in str(e) and "Clash" not in str(e)
+        # ③d 直连失败必须清 _HOST_DIRECT 记忆（防一次性抖动永久锁死直连）
+        assert "u.example" not in pc._HOST_DIRECT
         # ④ HTTPError（已拿到服务端响应）不重试，原样上抛
         import urllib.error as _ue
         def _raise_http(*a, **k):

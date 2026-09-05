@@ -5,6 +5,7 @@ models/
 *.mp4
 *.flv
 *.tmp
+*.tmp*
 *.rawerr
 __pycache__/
 node_modules/

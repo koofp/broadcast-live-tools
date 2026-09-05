@@ -5,13 +5,18 @@
 修复后 acquire/探测均为 CreateFileW share=0 真独占，与 process_all.ps1 的 FileStream 互认。"""
 import os
 import sys
+import tempfile
 import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from panel import services  # noqa: E402
 
-LOCK = services.ROOT / "run.lock"
+# 隔离（评审 P1）：不得操作真实仓库根的 run.lock——计划任务/面板 Worker 持锁时
+# verify 会假失败，测试自身也会清掉运维现场的陈旧锁。全流程使用临时目录锁。
+_REAL_LOCK = services.ROOT / "run.lock"
+services.LOCK = Path(tempfile.mkdtemp(prefix="bilive_locktest_")) / "run.lock"
+LOCK = services.LOCK
 
 
 def run() -> bool:
@@ -34,9 +39,10 @@ def run() -> bool:
         assert info.get("stale_cleaned") is True and not LOCK.exists(), \
             f"陈旧锁应被清除: {info}"
 
-        # 陈旧锁在、不探测 → acquire 仍可正常获取（原子判存创建）
+        # 陈旧锁（文件在、无持有者）→ acquire 自愈：清除后直接获取成功
+        # （评审 P2 采纳：面板被杀遗留的锁文件不再让 Worker 空转等状态线程来清）
         LOCK.write_text("dead2", encoding="utf-8")
-        assert services.acquire_run_lock() is False, "文件已存在时 acquire 必须失败"
+        assert services.acquire_run_lock() is True, "陈旧锁应被 acquire 自愈获取"
         services.release_run_lock()
         return True
     finally:
@@ -44,6 +50,10 @@ def run() -> bool:
 
 
 if __name__ == "__main__":
-    ok = run()
+    try:
+        ok = run()
+    finally:
+        services.release_run_lock()
+        services.LOCK = _REAL_LOCK   # 还原，防泄漏到同进程其他测试
     print("[PASS] run.lock 独占语义回归" if ok else "[FAIL]")
     sys.exit(0 if ok else 1)

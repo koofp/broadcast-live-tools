@@ -12,6 +12,7 @@
 </div>
 
 <h2>AI 供应商（总结模型）</h2>
+{% if provider.model_deprecated %}<p style="color:#c0392b;font-weight:bold">⚠ 当前为 legacy 通道且默认模型 stealth/ox-alpha 已失效——总结将全部失败。请在下方填入 API Key 并保存，改用可用供应商。</p>{% endif %}
 <p class="mut">OpenAI 兼容中继。Base URL 形如 <code>https://new-api.abrdns.com</code>（自动补 <code>/v1/chat/completions</code>）。API Key 仅本地存储于 <code>provider.json</code>（已 gitignore），绝不入库。模型列表可点击「获取模型列表」在线拉取（<code>GET /v1/models</code>），也可手动输入。</p>
 <div class="cols">
   <div>
@@ -106,9 +107,10 @@ App.pageInit.settings = function(){
     const r=await App.postJSON('/api/provider/models',{base_url:App.q('#pv-base').value,api_key:App.q('#pv-key').value});
     if(r&&r.ok&&r.models&&r.models.length){
       pvModels=r.models.slice();
-      if(!pvModels.includes(pvActive)) pvActive=pvModels[0]||'';
+      let note='';
+      if(!pvModels.includes(pvActive)){ note='（原生效模型 '+(pvActive||'空')+' 不在列表，已临时切换）'; pvActive=pvModels[0]||''; }
       pvRender();
-      st.textContent='✓ 获取到 '+r.models.length+' 个模型（'+r.latency_ms+'ms）——选择当前生效模型后保存';
+      st.textContent='✓ 获取到 '+r.models.length+' 个模型（'+r.latency_ms+'ms）'+note+'——选择当前生效模型后保存';
     } else st.textContent='✗ '+((r&&r.error)||'获取失败')+((r&&r.detail)?(' · '+r.detail):'')+'（仍可手动输入模型名）';
   };
   App.q('#pv-test').onclick=async()=>{

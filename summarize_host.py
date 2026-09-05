@@ -40,8 +40,8 @@ def _chat(prompt, key, model, chat_url, max_tokens):
         "messages": [{"role": "user", "content": prompt}],
     }).encode()
     headers = {"Authorization": "Bearer " + key, "Content-Type": "application/json"}
-    # _fetch：默认 opener 失败自动直连重试，网络级错误附 Clash 排障提示（与设置页同口径）
-    raw = provider_config._fetch(chat_url, body, headers, timeout=900)[0]
+    # fetch：默认 opener 失败自动直连重试，网络级错误附排障提示（与设置页同口径）
+    raw = provider_config.fetch(chat_url, body, headers, timeout=900)[0]
     d = json.loads(raw.decode("utf-8", "ignore"))
     choice = d["choices"][0]
     msg = choice.get("message", {}) or {}
@@ -49,10 +49,19 @@ def _chat(prompt, key, model, chat_url, max_tokens):
             msg.get("reasoning_content") or "", d.get("usage", {}))
 
 
+_LEGACY_WARNED = False
+
+
 def call_llm(prompt, key=None, model=None, chat_url=None, max_tokens=None):
     """通用 LLM 调用：参数缺省时读 provider_config（设置页可配）。
     请求体保持 OpenAI messages 结构，兼容 new-api 等 OpenAI 兼容中继。"""
+    global _LEGACY_WARNED
     p = provider_config.resolve()
+    if p.get("model_deprecated") and not _LEGACY_WARNED:
+        # legacy 链默认模型已实锤失效（provider.json 损坏自愈/新 clone 场景会静默落到这里）
+        _LEGACY_WARNED = True
+        print("[warn] legacy 通道生效且默认模型 stealth/ox-alpha 已失效——"
+              "请在设置页「AI 供应商」把 key/base_url/模型配进 provider.json", flush=True)
     key = key or p["api_key"]
     model = model or p["model"]
     chat_url = chat_url or p["chat_url"]

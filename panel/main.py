@@ -75,12 +75,13 @@ def _get_worker_env():
     return os.environ.copy()
 
 
-def _run_job(job: dict):
+def _run_job(job: dict) -> bool:
+    """执行单个任务。返回 False=锁被占退回队列（调用方应退避），True=已终态落盘。"""
     # 与 process_all.ps1 的互斥点：拿不到 run.lock → 任务退回队列（稍后重试）
     if not services.acquire_run_lock():
         services.defer_job(job["id"])
         print(f"[job {job['id']}] run.lock 被占用，任务退回队列", flush=True)
-        return
+        return False
     try:
         v = job["path"]
         base = Path(v).with_suffix("")
@@ -98,11 +99,11 @@ def _run_job(job: dict):
                 print(f"[job {job['id']}] 转写超时(1h)，放弃本次", flush=True)
         if not srt.exists():
             services.finish_job(job["id"], False, "转写无产出")
-            return
+            return True
         if services.is_placeholder_srt(srt):
             sum_md.write_text("（该分段无语音内容，未生成总结）", encoding="utf-8")
             services.finish_job(job["id"], True, "占位（无语音）跳过总结")
-            return
+            return True
         if not sum_md.exists():
             print(f"[job {job['id']}] 总结 {Path(v).name}", flush=True)
             try:
@@ -114,6 +115,7 @@ def _run_job(job: dict):
                 print(f"[job {job['id']}] 总结超时(30min)", flush=True)
         services.finish_job(job["id"], sum_md.exists(),
                             None if sum_md.exists() else "总结无产出")
+        return True
     finally:
         services.release_run_lock()
 
@@ -125,7 +127,8 @@ def _worker_loop():
             job = services.pop_next_job()
             if job:
                 try:
-                    _run_job(job)
+                    if not _run_job(job):
+                        time.sleep(2)   # 锁被占退避：防紧循环高频刷 queue.json（陈旧锁自愈窗口）
                 except Exception as e:
                     services.finish_job(job["id"], False, repr(e)[:200])
                     print(f"[worker] 任务失败已记录: {repr(e)[:150]}", flush=True)

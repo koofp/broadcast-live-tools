@@ -25,9 +25,11 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent
 PROVIDER_FILE = ROOT / "provider.json"
 
-# 默认供应商：new-api 中继（OpenAI 兼容）
+# 默认供应商：new-api 中继（OpenAI 兼容）。
+# DEFAULT_MODEL 仅作 provider.json 缺失/损坏时的播种骨架占位——取实盘 /v1/models
+# 里存在的 ID（实盘快照无 "1M" 变体，幽灵模型会让播种场景必失败）
 DEFAULT_BASE_URL = "https://new-api.abrdns.com"
-DEFAULT_MODEL = "DeepSeek-V4-Flash-0731-1M-think"
+DEFAULT_MODEL = "DeepSeek-V4-Flash-0731-think"
 DEFAULT_MODELS = [DEFAULT_MODEL]
 DEFAULT_MAX_TOKENS = 16000
 
@@ -47,16 +49,27 @@ _LOCK = threading.RLock()   # load 播种 / save 读改写互斥（load 会调 s
 # 下，代理挂了直连通——回退可自愈；Clash TUN(fake-ip) 模式下直连也会被截流，无法绕过，
 # 此时错误信息必须指向 Clash 分流，而不是让人怀疑代码。
 _DIRECT_OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))
-_HOST_DIRECT: set[str] = set()   # 已确认"只能直连"的主机，后续跳过代理尝试
+_HOST_DIRECT: set[str] = set()   # 直连成功过的主机，后续跳过代理尝试（直连失败即清除，见 fetch）
 _SSL_HINT = ("TLS 在握手阶段被中断。本机若在 Clash TUN(fake-ip) 环境（DNS 返回 198.18.x.x），"
              "用户态无法绕过，需在 Clash 里为该域名加 DIRECT 规则或换可用节点；"
              "若浏览器也打不开该站点，则是中继服务本身故障。")
+# legacy 链默认模型已实锤失效（2026-09-05）：resolve() 落 legacy 链时带 model_deprecated 标记，
+# 消费方（call_llm 打日志 / 设置页红标）据此在"错误路径"上给出换供应商指引，而非只靠文档
+LEGACY_MODEL_DEPRECATED = True
 
 
-def _fetch(url: str, data: bytes | None, headers: dict, timeout: int) -> tuple[bytes, str]:
-    """带直连回退的 HTTP 请求。返回 (body, via="默认"|"直连")。
-    HTTPError（4xx/5xx=已拿到服务端响应）原样抛出，交调用方按状态处理；
-    网络级错误（SSL/连接/超时）两级尝试后抛 RuntimeError（附排障提示）。"""
+def _is_timeout(exc: Exception) -> bool:
+    """urlopen 的两种超时形态：读阶段裸 TimeoutError；连接/握手阶段被包进
+    URLError(reason=TimeoutError)。只认前者的分类会把连接超时误导成 Clash 问题。"""
+    return isinstance(exc, TimeoutError) or (
+        isinstance(exc, urllib.error.URLError)
+        and isinstance(getattr(exc, "reason", None), TimeoutError))
+
+
+def fetch(url: str, data: bytes | None, headers: dict, timeout: int) -> tuple[bytes, str]:
+    """带直连回退的 HTTP 请求（LLM 供应商统一请求层，公共契约）。
+    返回 (body, via="默认"|"直连")。HTTPError（4xx/5xx=已拿到服务端响应）原样抛出，
+    交调用方按状态处理；网络级错误两级尝试后抛 RuntimeError（附排障提示）。"""
     host = urllib.parse.urlsplit(url).netloc
     plans = [("直连", _DIRECT_OPENER)] if host in _HOST_DIRECT else \
             [("默认", None), ("直连", _DIRECT_OPENER)]
@@ -75,11 +88,16 @@ def _fetch(url: str, data: bytes | None, headers: dict, timeout: int) -> tuple[b
             raise
         except Exception as e:
             last = e
+            if name == "直连":
+                # 直连也失败=网络环境已变，交还下次按"默认→直连"重判（防一次性抖动永久锁死记忆）
+                _HOST_DIRECT.discard(host)
     # 超时=服务端慢（think 模型长思考/过载），TLS/连接中断才指向本机代理分流——提示分开给，防误导
     hint = ("中继响应超时（think 模型长思考或服务过载，可稍后重试）"
-            if isinstance(last, TimeoutError)
-            else _SSL_HINT)
+            if _is_timeout(last) else _SSL_HINT)
     raise RuntimeError(f"{repr(last)[:160]} —— {hint}")
+
+
+_fetch = fetch   # 兼容别名：summarize_host 历史调用与既有测试
 
 
 def _legacy_key() -> tuple[str, str]:
@@ -168,6 +186,8 @@ def resolve_models_url(base_url: str) -> str:
     base = (base_url or DEFAULT_BASE_URL).strip().rstrip("/")
     if base.endswith("/chat/completions"):
         base = base[: -len("/chat/completions")]
+    if base.endswith("/models"):
+        return base   # 用户直接粘了 models 端点，防双重拼接 /v1/models/v1/models
     if base.endswith("/v1"):
         return base + "/models"
     return base + "/v1/models"
@@ -186,6 +206,8 @@ def list_models(base_url: str, api_key: str, timeout: int = 30) -> dict:
         latency = int((time.time() - t0) * 1000)
         d = json.loads(raw.decode("utf-8", "ignore"))
         data = d.get("data") if isinstance(d, dict) else None
+        if not isinstance(data, list) and isinstance(d, dict) and isinstance(d.get("models"), list):
+            data = d["models"]   # Ollama 风格非标中继兼容
         ids = sorted({m.get("id").strip() for m in (data or [])
                       if isinstance(m, dict) and isinstance(m.get("id"), str) and m.get("id").strip()})
         if ids:
@@ -193,8 +215,10 @@ def list_models(base_url: str, api_key: str, timeout: int = 30) -> dict:
         if isinstance(d, dict) and d.get("error"):
             return {"ok": False, "models": [], "latency_ms": latency,
                     "error": str(d["error"])[:120], "detail": json.dumps(d)[:200]}
+        # 非标结构 ≠ 中继异常：带出顶层键名辅助排障
+        top = ",".join(list(d.keys())[:8]) if isinstance(d, dict) else type(d).__name__
         return {"ok": False, "models": [], "latency_ms": latency,
-                "error": "响应无模型列表（中继异常？）", "detail": json.dumps(d)[:200]}
+                "error": f"响应无模型列表（顶层键: {top}，非 OpenAI 兼容格式？）"}
     except urllib.error.HTTPError as e:
         detail = ""
         try:
@@ -205,29 +229,33 @@ def list_models(base_url: str, api_key: str, timeout: int = 30) -> dict:
                 "error": f"HTTP {e.code}", "detail": detail}
     except Exception as e:
         return {"ok": False, "models": [], "latency_ms": int((time.time() - t0) * 1000),
-                "error": repr(e)[:200]}
+                "error": repr(e)[:400]}
 
 
 def resolve() -> dict:
     """解析当前生效连接参数（双链同源，见模块 docstring）。
-    返回 {base_url, api_key, model, chat_url, key_source}。"""
+    返回 {base_url, api_key, model, chat_url, key_source, model_deprecated}；
+    legacy 链时 model_deprecated=True（默认模型已失效，消费方据此给出换供应商指引）。"""
     cfg = load()
     key = (cfg.get("api_key") or "").strip()
     if key:
         base = (cfg.get("base_url") or DEFAULT_BASE_URL).strip()
         model = (cfg.get("active_model") or DEFAULT_MODEL).strip()
         return {"base_url": base.rstrip("/"), "api_key": key, "model": model,
-                "chat_url": resolve_chat_url(base), "key_source": "provider.json"}
+                "chat_url": resolve_chat_url(base), "key_source": "provider.json",
+                "model_deprecated": False}
     key, src = _legacy_key()
     if key:
         # legacy key 属 OpenRouter 体系：端点/模型必须同步回退，混搭 new-api 中继必 401
         return {"base_url": LEGACY_BASE_URL, "api_key": key, "model": LEGACY_MODEL,
-                "chat_url": resolve_chat_url(LEGACY_BASE_URL), "key_source": src}
+                "chat_url": resolve_chat_url(LEGACY_BASE_URL), "key_source": src,
+                "model_deprecated": LEGACY_MODEL_DEPRECATED}
     # 无任何 key：返回 provider.json 骨架，调用方给出完整来源指引
     base = (cfg.get("base_url") or DEFAULT_BASE_URL).strip()
     return {"base_url": base.rstrip("/"), "api_key": "",
             "model": (cfg.get("active_model") or DEFAULT_MODEL).strip(),
-            "chat_url": resolve_chat_url(base), "key_source": ""}
+            "chat_url": resolve_chat_url(base), "key_source": "",
+            "model_deprecated": False}
 
 
 def test_model(base_url: str, api_key: str, model: str, timeout: int = 90) -> dict:
@@ -280,4 +308,4 @@ def test_model(base_url: str, api_key: str, model: str, timeout: int = 90) -> di
                 "error": f"HTTP {e.code}", "detail": detail}
     except Exception as e:
         return {"ok": False, "latency_ms": int((time.time() - t0) * 1000),
-                "error": repr(e)[:200]}
+                "error": repr(e)[:400]}

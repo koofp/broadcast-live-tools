@@ -61,6 +61,13 @@ if (-not $up) {
     }
     if (-not $up) { $fail += '面板拉起失败（15 秒内未上线），详见 logs\panel-stdout.log' }
 }
+if ($up) {
+    # 页面渲染冒烟：/api 200 不代表 Jinja 页面能渲染（曾出现模板 UndefinedError 500 探不到）
+    try {
+        $r2 = Invoke-WebRequest 'http://127.0.0.1:9090/settings' -UseBasicParsing -TimeoutSec 10
+        if ($r2.StatusCode -ne 200 -or $r2.Content -notmatch 'AI') { $fail += '面板 /settings 渲染异常' }
+    } catch { $fail += "面板 /settings 请求失败: $($_.Exception.Message)" }
+}
 
 if ($fail) {
     Write-Host '[FAIL]' -ForegroundColor Red

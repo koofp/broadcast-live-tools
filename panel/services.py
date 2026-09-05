@@ -406,7 +406,7 @@ def readiness_check() -> dict:
         req = urllib.request.Request(
             "http://127.0.0.1:22333/api/v1/tasks/data",
             headers={"X-API-KEY": "Bil1veLocal2026"})
-        with _DIRECT_OPENER.open(req, timeout=5) as r:
+        with _BILI_OPENER.open(req, timeout=5) as r:
             tasks_data = json.loads(r.read().decode("utf-8"))
         for td in tasks_data:
             rid = td["room_info"]["room_id"]
@@ -659,16 +659,21 @@ def _win_open_exclusive(path: Path, create_new: bool):
     仅限 Windows（本项目运行环境）。"""
     global _WIN_K32
     if _WIN_K32 is None:
-        k32 = ctypes.windll.kernel32
+        k32 = ctypes.WinDLL("kernel32", use_last_error=True)   # 文档级保证 last error 不被 ctypes 内部调用重置
         k32.CreateFileW.restype = ctypes.c_void_p
         k32.CreateFileW.argtypes = [wt.LPCWSTR, wt.DWORD, wt.DWORD, wt.LPVOID,
                                     wt.DWORD, wt.DWORD, wt.HANDLE]
+        k32.CloseHandle.argtypes = [wt.HANDLE]
+        k32.CloseHandle.restype = wt.BOOL
+        k32.WriteFile.argtypes = [wt.HANDLE, ctypes.c_char_p, wt.DWORD,
+                                  ctypes.POINTER(wt.DWORD), wt.LPVOID]
+        k32.WriteFile.restype = wt.BOOL
         _WIN_K32 = k32
     invalid = ctypes.c_void_p(-1).value
     h = _WIN_K32.CreateFileW(str(path), 0xC0000000, 0, None,
                              1 if create_new else 3, 0, None)  # CREATE_NEW / OPEN_EXISTING
     if h is None or h == invalid:
-        err = _WIN_K32.GetLastError()
+        err = ctypes.get_last_error()
         if err in (80, 183):      # ERROR_FILE_EXISTS / ERROR_ALREADY_EXISTS
             raise FileExistsError(err)
         if err == 2:              # ERROR_FILE_NOT_FOUND
@@ -677,30 +682,60 @@ def _win_open_exclusive(path: Path, create_new: bool):
     return h
 
 
-def acquire_run_lock() -> bool:
-    """非阻塞独占获取 run.lock（Worker 与 process_all.ps1 的互斥点）。
-    CreateFileW CREATE_NEW 即原子"判锁+获取"，且 share=0 让 lock_info 的独占探测
-    能正确识别"活锁"，不再误删（TOCTOU 与误删双消除）。"""
-    global _run_lock_handle
+def _stamp_lock():
+    """锁戳仅诊断用，失败不影响锁持有。"""
     try:
-        _run_lock_handle = _win_open_exclusive(LOCK, create_new=True)
-    except (FileExistsError, PermissionError, FileNotFoundError, OSError):
-        return False
-    try:   # 锁戳仅诊断用，失败不影响锁持有
         written = ctypes.c_ulong(0)
         msg = f"worker pid={os.getpid()} t={time.strftime('%H:%M:%S')}".encode()
         _WIN_K32.WriteFile(_run_lock_handle, msg, len(msg), ctypes.byref(written), None)
     except Exception:
         pass
+
+
+def _heal_stale_lock() -> bool:
+    """锁文件存在但可能无持有者（进程崩溃遗留）：独占打开成功=确无持有者 → 删除。
+    打不开=活锁在持（本 Worker 之外的 Worker/process_all FileStream），如实返回 False。"""
+    try:
+        h = _win_open_exclusive(LOCK, create_new=False)
+    except OSError:
+        return False
+    try:
+        _WIN_K32.CloseHandle(h)
+    except Exception:
+        pass
+    try:
+        LOCK.unlink(missing_ok=True)
+        return True
+    except OSError:
+        return False   # 删除挂起未释放等瞬态：交给状态刷新线程下轮再清
+
+
+def acquire_run_lock() -> bool:
+    """非阻塞独占获取 run.lock（Worker 与 process_all.ps1 的互斥点）。
+    CreateFileW CREATE_NEW 即原子"判锁+获取"；失败时自愈一次陈旧锁
+    （面板被杀会遗留无持有者的锁文件，不自愈则 Worker 空转到状态线程来清）。
+    仅面板 Worker 线程调用——其他代码不得调 release 误杀 Worker 持锁。"""
+    global _run_lock_handle
+    try:
+        _run_lock_handle = _win_open_exclusive(LOCK, create_new=True)
+    except OSError:
+        if not _heal_stale_lock():
+            return False
+        try:
+            _run_lock_handle = _win_open_exclusive(LOCK, create_new=True)
+        except OSError:
+            return False
+    _stamp_lock()
     return True
 
 
 def release_run_lock():
+    """释放 run.lock。仅面板 Worker 线程调用（见 acquire_run_lock）。"""
     global _run_lock_handle
     h, _run_lock_handle = _run_lock_handle, None
     if h is not None:
         try:
-            ctypes.windll.kernel32.CloseHandle(h)
+            _WIN_K32.CloseHandle(h)
         except Exception:
             pass
     try:
@@ -760,12 +795,12 @@ _live_cache: dict = {"ts": 0.0, "data": {}}
 # B站 API 专用 opener：强制直连，永不走系统/环境代理
 # （评审实锤：urlopen 会把首次请求时的系统代理缓存进模块级 opener——
 #   Clash 崩溃后死端口 7897 被缓存，面板所有 B站请求永久 ConnectionRefused）
-_DIRECT_OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+_BILI_OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 
 
 def _bili_get(url: str, timeout: int = 8):
     req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
-    return _DIRECT_OPENER.open(req, timeout=timeout)
+    return _BILI_OPENER.open(req, timeout=timeout)
 
 
 def live_status(room_ids: list[int]) -> dict:
@@ -780,7 +815,7 @@ def live_status(room_ids: list[int]) -> dict:
             req = urllib.request.Request(
                 f"https://api.live.bilibili.com/room/v1/Room/get_info?room_id={rid}",
                 headers={"User-Agent": "Mozilla/5.0"})
-            with _DIRECT_OPENER.open(req, timeout=6) as r:
+            with _BILI_OPENER.open(req, timeout=6) as r:
                 d = json.loads(r.read().decode("utf-8", "ignore")).get("data", {})
             entry.update({"live_status": d.get("live_status"),
                           "title": d.get("title", ""),
@@ -863,7 +898,7 @@ def validate_room(room_id: int) -> dict:
         req = urllib.request.Request(
             f"https://api.live.bilibili.com/room/v1/Room/get_info?room_id={room_id}",
             headers={"User-Agent": "Mozilla/5.0"})
-        with _DIRECT_OPENER.open(req, timeout=8) as r:
+        with _BILI_OPENER.open(req, timeout=8) as r:
             d = json.loads(r.read().decode("utf-8", "ignore"))
         if d.get("code") == 0 and d.get("data"):
             return {"valid": True, "title": d["data"].get("title", ""),
@@ -894,6 +929,7 @@ def provider_view() -> dict:
         "key_set": bool(key),
         "key_tail": key[-6:] if key else "",
         "key_source": r["key_source"],
+        "model_deprecated": bool(r.get("model_deprecated")),
     }
 
 
