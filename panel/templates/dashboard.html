@@ -18,8 +18,8 @@
   <div class="card"><div class="chip chip-green"><svg viewBox="0 0 16 16"><path d="M8 1a7 7 0 0 0-7 7h2a5 5 0 0 1 5-5V1z"/><path d="M8 15a7 7 0 0 0 7-7h-2a5 5 0 0 1-5 5v2z"/></svg></div><div class="k">磁盘剩余</div><div class="v" id="c-disk">{{ st.free_gb }}<small>GB</small></div></div>
   <div class="card"><div class="chip chip-blue"><svg viewBox="0 0 16 16"><path d="M2 1h12v3l-5 4 5 4v3H2v-3l5-4-5-4V1z"/></svg></div><div class="k">可录天数</div><div class="v" id="c-days">{{ st.days }}</div></div>
   <a class="card link" href="/segments?status=none"><div class="chip chip-amber"><svg viewBox="0 0 16 16"><path d="M8 1 15 14H1L8 1zm-.9 5h1.8v4H7.1V6zm0 5h1.8v1.8H7.1V11z"/></svg></div><div class="k">积压待处理</div><div class="v" id="c-backlog">{{ st.backlog }}</div><div class="hint">进入片段库 →</div></a>
-  <div class="card"><div class="chip {% if 'fakeip' in (st.issues or []) %}chip-red{% else %}chip-green{% endif %}"><svg viewBox="0 0 16 16"><path d="M8 1 14 3v5c0 3.5-2.5 6-6 7-3.5-1-6-3.5-6-7V3l6-2z"/></svg></div><div class="k">DNS 劫持</div><div class="v" id="c-fakeip">{% if 'fakeip' in (st.issues or []) %}被劫持{% elif st.issues and 'dns' in st.issues %}解析失败{% else %}正常{% endif %}</div>
-    {% if 'fakeip' in (st.issues or []) %}<div class="hint bad-hint">Clash TUN 运行中 · 切全局会断录 · 建议退出</div>{% endif %}</div>
+  <div class="card"><div class="chip {% if 'fakeip' in (st.issues or []) %}chip-red{% elif st.fakeip_state and st.fakeip_state != 'idle' %}chip-amber{% else %}chip-green{% endif %}"><svg viewBox="0 0 16 16"><path d="M8 1 14 3v5c0 3.5-2.5 6-6 7-3.5-1-6-3.5-6-7V3l6-2z"/></svg></div><div class="k">DNS 劫持</div><div class="v" id="c-fakeip">{% if 'fakeip' in (st.issues or []) %}劫持+停摆!{% elif st.fakeip_state == 'recording' %}Clash 在位·录制中{% elif st.fakeip_state == 'unknown' %}Clash 状态未知{% elif st.fakeip_state == 'idle' %}Clash 在位·未在录{% elif st.issues and 'dns' in st.issues %}解析失败{% else %}正常{% endif %}</div>
+    {% if 'fakeip' in (st.issues or []) %}<div class="hint bad-hint">劫持+录制停摆同时出现 · 立即退出 Clash</div>{% elif st.fakeip_state == 'recording' %}<div class="hint">Clash TUN 在位 · 文件正常增长 · 勿切全局模式</div>{% endif %}</div>
 </div>
 
 <div class="card wide" style="margin-bottom:22px">
@@ -59,10 +59,17 @@ App.pageInit.dashboard = async function(){
     App.setCard('c-newest', d.newest_age_min==null?'-':d.newest_age_min+'分钟前');
     App.setCard('c-disk', d.free_gb+'GB'); App.setCard('c-days', d.days);
     App.setCard('c-backlog', d.backlog);
-    const fp=(d.issues||[]).includes('fakeip');
-    App.setCard('c-fakeip', fp?'被劫持':((d.issues||[]).includes('dns')?'解析失败':'正常'));
-    App.badge('c-newest', d.newest_age_min!=null && d.newest_age_min>45);
-    App.badge('c-days', d.days<2); App.badge('c-fakeip', fp);
+    // DNS 劫持卡三态（fakeip_state: recording/idle/unknown；旧缓存无该字段时按 issues 回退）
+    const fpRed=(d.issues||[]).includes('fakeip');
+    const st3=d.fakeip_state||'';
+    App.setCard('c-fakeip', fpRed?'劫持+停摆!':(st3==='recording'?'Clash 在位·录制中':(st3==='unknown'?'Clash 状态未知':(st3==='idle'?'Clash 在位·未在录':((d.issues||[]).includes('dns')?'解析失败':'正常')))));
+    App.badge('c-fakeip', fpRed);
+    const fpCard=document.querySelector('#c-fakeip');
+    const fpChip=fpCard ? fpCard.closest('.card').querySelector('.chip') : null;
+    if(fpChip){ fpChip.classList.remove('chip-red','chip-amber','chip-green');
+      fpChip.classList.add(fpRed?'chip-red':(st3 && st3!=='idle' ? 'chip-amber':'chip-green')); }
+    App.badge('c-newest', d.newest_age_min!=null && d.newest_age_min>45 && st3==='recording');
+    App.badge('c-days', d.days<2);
     App.q('#lock-state').textContent = d.locked?'后台处理中(锁激活)':'空闲';
     // 流程条 · 第1段（录制）
     const rec = document.querySelector('#f-rec');

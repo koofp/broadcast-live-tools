@@ -62,6 +62,17 @@ function Get-Candidates {
 }
 
 try {
+    # 场次缓存重算（2026-09-05：挂进每轮使 sessions.json 永不 stale——总结库可见性/REPORT
+    # 场次视图都依赖它。必须置于各 exit 分支之前，否则"无待处理文件"路径永不执行=自动化
+    # 恰在最需要时失效。纯重算无 LLM/网络秒级完成；不带 --summarize——429 长退避会占住
+    # run.lock 阻塞转写，场级总结由面板/手动触发）
+    if (-not $One) {
+        try {
+            Log '[session] 重算场次缓存'
+            python session.py 2>&1 | ForEach-Object { Log "  $_" }
+            if ($LASTEXITCODE -ne 0) { Log "[warn] session.py exit=$LASTEXITCODE（不影响批处理）" }
+        } catch { Log "[warn] 场次重算异常: $_" }
+    }
     if ($One) {
         $targets = @(Get-Item -LiteralPath $One -ErrorAction Stop | Select-Object -ExpandProperty FullName)
     } else {
