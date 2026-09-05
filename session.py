@@ -117,6 +117,19 @@ def merge_archived(old: dict | None, new_sessions: list):
     for os_ in old.get("sessions", []):
         ns = by_id.get(os_["id"])
         if not ns:
+            # 整场段全部归档（新聚类中该场消失）：以纯归档身份重建，元数据不蒸发
+            # （runbook §5.99 承诺；2026-09-05 审查升级——sessions.json 改为每 30min 自动
+            # 重算后，cleanup 清掉整场的概率与后果同步上升。fingerprint 沿用旧值：
+            # 段名单未变，场级总结不会误判 stale）
+            segs = [dict(s, archived=True) for s in os_.get("segments", []) if s.get("name")]
+            if not segs:
+                continue
+            rebuilt = dict(os_)
+            rebuilt["segments"] = segs
+            rebuilt["segment_count"] = len(segs)
+            rebuilt["archived_count"] = len(segs)
+            rebuilt["closed"] = True
+            new_sessions.append(rebuilt)
             continue
         known = {seg["name"] for seg in ns["segments"]}
         for seg in os_.get("segments", []):
@@ -145,7 +158,9 @@ def load_overrides(room: str) -> dict:
 def save_json(room: str, name: str, data: dict):
     d = VIDEOS / room / "_sessions"
     d.mkdir(parents=True, exist_ok=True)
-    tmp = d / (name + ".tmp")
+    # tmp 带 PID：本脚本被 计划任务/面板 toggle/手动 三方拉起（无统一互斥），固定名 tmp
+    # 双进程互写会落盘垃圾 JSON（与 summarize_host 同款竞态，2026-09-05 审查 P2）
+    tmp = d / (name + f".tmp{os.getpid()}")
     tmp.write_text(json.dumps(data, ensure_ascii=False, indent=1), encoding="utf-8")
     os.replace(tmp, d / name)
 
@@ -353,6 +368,13 @@ def main():
     ap.add_argument("--merge", nargs=3, metavar=("ROOM", "ID_A", "ID_B"))
     ap.add_argument("--split", nargs=3, metavar=("ROOM", "SESSION_ID", "SEGMENT_NAME"))
     a = ap.parse_args()
+
+    # 守卫（2026-09-05 评审）：--summarize 后跟房间号是文档曾写错的形式——房间号被
+    # nargs='?' 吃成场次ID → 全房间扫描后 LLM 过滤永假 → exit 0 静默空转。宁可报错。
+    if a.summarize and a.summarize != "__all__" and a.summarize.isdigit() and not a.room:
+        print("[fail] --summarize 后跟的是房间号？正确用法：--room <房间> --summarize [场次ID]",
+              flush=True)
+        sys.exit(2)
 
     if a.title:
         room, sid, title = a.title

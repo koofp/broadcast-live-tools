@@ -32,6 +32,28 @@ def run() -> bool:
     arch = [x for x in new2[0]["segments"] if x["name"] == "gone.mp4"]
     assert len(arch) == 1, "重复回填"
     assert arch[0]["archived"] is True, "二次重算归档标记丢失"
+
+    # 第三次（2026-09-05 评审）：整场段全部归档 → 新聚类中该场消失 → 必须以纯归档
+    # 身份重建（元数据不蒸发承诺）。fingerprint 沿用旧值 → 场级总结不误判 stale。
+    old3 = {"sessions": [{"id": "B", "room": "R", "title": "旧场", "fingerprint": "2:deadbeef",
+                          "start": "2026-08-20 10:00:00", "end_est": "2026-08-20 11:00:00",
+                          "segments": [
+                              {"name": "b1.mp4", "start": "2026-08-20 10:00:00"},
+                              {"name": "b2.mp4", "start": "2026-08-20 10:30:00"}]}]}
+    new3 = []   # 该场在新扫描中完全消失（全部段已被 cleanup）
+    session.merge_archived(old3, new3)
+    assert len(new3) == 1, "整场归档的场必须被重建"
+    b = new3[0]
+    assert b["id"] == "B" and b["title"] == "旧场", "重建场元数据应保留"
+    assert b["closed"] is True and b["archived_count"] == 2 and b["segment_count"] == 2
+    assert all(s.get("archived") for s in b["segments"]), "重建场所有段应标 archived"
+    assert b["fingerprint"] == "2:deadbeef", "重建场指纹沿用旧值（场级总结不误判 stale）"
+
+    # 第四次：重建结果再喂回 → 幂等（不重复追加、不丢字段）
+    old4 = {"sessions": [b]}
+    new4 = []
+    session.merge_archived(old4, new4)
+    assert len(new4) == 1 and new4[0]["archived_count"] == 2, "重建场再次重算应幂等"
     return True
 
 
