@@ -193,6 +193,8 @@ docker run -itd --name bilive_docker --restart unless-stopped \
   一次只剩详读），session.py `_assemble_sections` 做小节校验+缺失补全调用+规范序组装，
   必需小节清单 `SESSION_SECTIONS` 是下游提取契约（report_gen/总结库 one_liner）。
   **进化回路**：段级捕获新词/预测 → 场级汇总 → 用户确认后更新词典/画像 → 下场生效；
+  **跨场记忆已落地**：`{last_scorecard}` 占位注入上一场记分卡，LLM 逐条对账
+  （已证伪/已验证/待验证滚动记账，0827 场实测生效）；
   每积累 5-10 场可把全部场级总结喂给 LLM 重蒸馏"主播画像 v0"（prompt_session 内嵌）。
 
 ## 5.98 端到端自测（合成视频法 · 2026-08-24 固化）

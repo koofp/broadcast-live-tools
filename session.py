@@ -345,7 +345,31 @@ def _assemble_sections(text: str, prompt: str, key: str) -> str:
     return "\n\n".join(parts + extras)
 
 
-def gen_session_summary(session: dict, key: str, force: bool) -> bool:
+def last_scorecard_block(prev_session: dict | None, room: str) -> str:
+    """跨场记忆（2026-09-05）：把上一场的预测记分卡注入本场提示词，让 LLM 主动对账——
+    上一场的判断被本场事实印证/证伪后，状态在最新记分卡里滚动更新。
+    上一场缺失/无记分卡时给出明确的空态说明，不留悬空占位。"""
+    if not prev_session:
+        return "（跨场记忆：本场是该房间首场总结，无历史预测，直接输出本场预测，状态均为待验证）"
+    p = summary_path(room, prev_session["id"])
+    if not p.exists():
+        return "（跨场记忆：上一场总结文件缺失，无历史预测可对账）"
+    try:
+        card = _split_sections(p.read_text(encoding="utf-8", errors="ignore")).get("预测记分卡", "")
+    except Exception:
+        card = ""
+    rows = [ln.strip() for ln in (card or "").splitlines()
+            if ln.strip() and not ln.strip().startswith("| 标的")
+            and not ln.strip().startswith("|---")]
+    if not rows:
+        return "（跨场记忆：上一场无明确预测记录，直接输出本场预测）"
+    when = prev_session.get("start", "")[:16]
+    return ("【跨场记忆】上一场（" + when + "）预测记分卡如下，先用本场事实逐条对账：\n"
+            + "\n".join(rows)
+            + "\n（已被本场事实证明的：状态改为已证伪或已验证并保留；尚未发生的：并入本场记分卡，状态仍为待验证；本场新预测追加在表尾）")
+
+
+def gen_session_summary(session: dict, key: str, force: bool, prev_session: dict | None = None) -> bool:
     state, p = summary_state(session)
     if state == "ok" and not force:
         print(f"[skip] {p.name} 指纹一致", flush=True)
@@ -361,6 +385,8 @@ def gen_session_summary(session: dict, key: str, force: bool) -> bool:
         print(f"[skip] 场次 {session['id']} 仅 {len(live_segs)} 段，段级总结已足够", flush=True)
         return True
     tpl = load_prompt_session(session["room"])
+    if "{last_scorecard}" in tpl:   # 跨场记忆占位（模板无此占位则跳过注入，兼容旧模板）
+        tpl = tpl.replace("{last_scorecard}", last_scorecard_block(prev_session, session["room"]))
     prompt = tpl.replace("{summaries}", gather_summaries(session))
     print(f"[session] 生成场级总结 {session['id']}（{len(live_segs)} 段）…", flush=True)
     text = _assemble_sections(call_with_retry(prompt, key), prompt, key)
@@ -480,11 +506,15 @@ def main():
             print("[fatal] 未配置 API key（设置页 AI 供应商 / OPENROUTER_API_KEY / api_key.txt / 注册表 均为空）", flush=True)
             sys.exit(1)
         for room, data in results.items():
-            for s in data["sessions"]:
+            # 按场次ID（=起始时间戳）排序配对"上一场"——merge_archived 重建的纯归档场
+            # 会被追加到列表尾部，直接按列表序会错配
+            ordered = sorted(data["sessions"], key=lambda s: s["id"])
+            for i, s in enumerate(ordered):
                 if a.summarize != "__all__" and s["id"] != a.summarize:
                     continue
+                prev = ordered[i - 1] if i > 0 else None
                 try:
-                    gen_session_summary(s, key, force=a.force)
+                    gen_session_summary(s, key, force=a.force, prev_session=prev)
                 except Exception as e:
                     print(f"[FAIL] {s['id']}: {repr(e)[:200]}", flush=True)
 
