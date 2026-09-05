@@ -583,6 +583,16 @@ async def api_provider_test(req: Request):
     return await run_in_threadpool(services.provider_test, base_url, api_key, model)
 
 
+@app.post("/api/provider/models")
+async def api_provider_models(req: Request):
+    """拉取中继可用模型列表（GET /v1/models），设置页在线填充模型下拉。"""
+    b = await req.json()
+    base_url, api_key = b.get("base_url"), b.get("api_key")
+    if not all(isinstance(x, str) for x in (base_url, api_key)):
+        return JSONResponse({"ok": False, "error": "base_url/api_key 必须为字符串"}, status_code=400)
+    return await run_in_threadpool(services.provider_models, base_url, api_key)
+
+
 @app.get("/api/summary")
 def api_summary_md(room: str, name: str):
     s = services.find_summary(room, name)

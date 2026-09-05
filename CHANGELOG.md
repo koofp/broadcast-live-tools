@@ -3,6 +3,19 @@
 > 变更史。新变更记录到这里（按日期倒序），runbook 只保留"当前状态"不再堆时序日志。
 > 格式参考 Keep a Changelog；提交号可 `git show <hash>` 查看全文。
 
+## 2026-09-05 · 模型列表在线获取 + 切换 DeepSeek-V4-Pro-0813-think（ox 失效）
+
+- **feat(provider)**：设置页新增「⤓ 获取模型列表」按钮——`POST /api/provider/models` 走
+  `GET <base>/v1/models`（OpenAI 兼容，`resolve_models_url` 与 chat 端点同一套填法兼容），
+  拉到列表自动去重排序填充模型下拉（失败仍可手动输入）。配置与生效：
+  new-api 中继 + 全量 21 个模型入 provider.json，当前生效 `DeepSeek-V4-Pro-0813-think`
+  （实测 2.9s finish=stop 回复 pong）。
+- **deprecate**：stealth/ox-alpha 实锤失效（中继 /v1/models 无任何 ox 模型）——legacy
+  双链机制保留作兜底，但默认 legacy 模型已不可用，应把 key 配进 provider.json
+  （runbook §5.5 已注记）。
+- **test**：test_provider_config.py 补 resolve_models_url 五种填法 + list_models
+  去重排序/200+error/非 JSON/空 key 分支。
+
 ## 2026-09-05 · AI 供应商设置页（provider.json）+ 全链路口径统一（经三线审查修复）
 
 - **feat(provider)**：设置页新增「AI 供应商」卡片——Base URL / API Key（仅尾部回显）/ 模型列表

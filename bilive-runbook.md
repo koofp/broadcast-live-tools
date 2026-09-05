@@ -257,7 +257,7 @@ python session.py --split 8139918 <ID> <段文件名> # 在该段处强制切分
 | 组件 | 用途 | 触发 |
 |---|---|---|
 | `status.ps1` | 红黄绿监控：容器/进程/**fake-ip劫持指纹**/分段增长采样/磁盘可录天数/全房间积压；末尾输出 JSON | 手动（10秒） |
-| `process_all.ps1` | 幂等批处理：mp4∪孤儿flv 全房间遍历→small转写→ox-alpha总结；FileStream崩溃安全锁(PID戳/2h强抢)；BelowNormal低优先级；日志 logs\pipeline\*.log(14天轮转)；失败自动进下轮 | **计划任务 bilive-pipeline 每30分钟** / 面板按钮 |
+| `process_all.ps1` | 幂等批处理：mp4∪孤儿flv 全房间遍历→small转写→AI总结（供应商走 provider.json）；FileStream崩溃安全锁(PID戳/2h强抢)；BelowNormal低优先级；日志 logs\pipeline\*.log(14天轮转)；失败自动进下轮 | **计划任务 bilive-pipeline 每30分钟** / 面板按钮 |
 | `cleanup.ps1` | 归档清理 v3：删「已处理(真实段srt>1KB / 占位段有summary)+超48h」最旧段至200GB；_trash 7天回滚+keep白名单+单次20段上限；与 process_all 同锁(带锁戳)；删除留档 deleted.log | **计划任务 bilive-cleanup 每2小时**（<150GB 才实际删除）/ 面板按钮 / 手动 -Apply |
 | `panel.py` | Web面板 127.0.0.1:9090：四段流程条仪表盘、录制房间卡、跨房间分段表+徽章、任务队列+Worker、提示词编辑器、总结/字幕阅读 | **手动**：桌面「启动面板」一键拉起（计划任务已禁用；端口占用守卫防双开） |
 | 计划任务 | bilive-pipeline(每30分钟) ✅Ready；bilive-cleanup(每2小时) ✅Ready；bilive-panel ❌已禁用(2026-08-23 用户选手动) | — |
@@ -293,10 +293,14 @@ python session.py --split 8139918 <ID> <段文件名> # 在该段处强制切分
 
 **主通道：设置页「AI 供应商」（provider.json，OpenAI 兼容）** —— 面板 → 设置页 →
 Base URL / API Key / 模型列表 / 当前生效模型，保存即全链路生效（面板/批处理/场次总结同口径，
-key 与端点/模型同源解析）。测试按钮发最小 chat 请求回显延迟/错误；HTTP 200 但无 choices
-或带 error 判失败。key 仅回显尾部 6 字符。
+key 与端点/模型同源解析）。模型列表可点「⤓ 获取模型列表」在线拉取（`GET /v1/models`），
+也可手动输入；测试按钮发最小 chat 请求回显延迟/错误；HTTP 200 但无 choices 或带 error
+判失败。key 仅回显尾部 6 字符。当前生效：new-api 中继 + `DeepSeek-V4-Pro-0813-think`
+（2026-09-05 实测 2.9s/pong；中继 /v1/models 共 21 个模型，已全量入 provider.json 下拉）。
 
-**legacy 通道（provider.json 无 key 时自动整套接管）** —— OpenRouter（已验证可用）：
+**legacy 通道（provider.json 无 key 时自动整套接管）** —— OpenRouter（机制保留；
+⚠️ 默认模型 stealth/ox-alpha **2026-09-05 实锤已失效**，legacy 链不再是可靠回退，
+应在设置页把 key 配进 provider.json）：
 ```python
 url = "https://openrouter.ai/api/v1/chat/completions"
 headers = {"Authorization": "Bearer sk-or-v1-...", "Content-Type": "application/json"}

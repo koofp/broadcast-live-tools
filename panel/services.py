@@ -869,6 +869,14 @@ def provider_test(base_url: str, api_key: str, model: str) -> dict:
                                       api_key or r["api_key"],
                                       model or r["model"])
 
+
+def provider_models(base_url: str, api_key: str) -> dict:
+    """拉取中继可用模型列表（GET /v1/models）：参数留空回退当前生效配置，
+    与 provider_test 同口径。设置页用返回的列表填充模型下拉。"""
+    r = provider_config.resolve()
+    return provider_config.list_models(base_url or r["base_url"],
+                                       api_key or r["api_key"])
+
 def is_placeholder_srt(srt_path: Path) -> bool:
     try:
         return _PLACEHOLDER_MARK in srt_path.read_text(encoding="utf-8", errors="ignore")

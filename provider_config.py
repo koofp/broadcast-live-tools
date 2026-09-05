@@ -33,6 +33,8 @@ DEFAULT_MAX_TOKENS = 16000
 # legacy 链（provider.json 无 key 时）：保持 provider.json 引入前的端点与模型不变。
 # base_url 带 /api 前缀——resolve_chat_url 会补 /v1/chat/completions，
 # 拼出 OpenRouter 正确端点 https://openrouter.ai/api/v1/chat/completions
+# ⚠️ stealth/ox-alpha 2026-09-05 实锤已失效——legacy 链保留仅作机制兜底，
+# 应在设置页把 key/base_url/模型配进 provider.json（支持 GET /v1/models 在线拉列表）
 LEGACY_BASE_URL = "https://openrouter.ai/api"
 LEGACY_MODEL = "stealth/ox-alpha"
 
@@ -116,6 +118,54 @@ def resolve_chat_url(base_url: str) -> str:
     if base.endswith("/v1"):
         return base + "/chat/completions"
     return base + "/v1/chat/completions"
+
+
+def resolve_models_url(base_url: str) -> str:
+    """把 base_url 规整成模型列表端点（GET /v1/models，OpenAI 兼容）。
+    与 resolve_chat_url 同一套填法兼容；legacy 的 https://openrouter.ai/api
+    拼出 https://openrouter.ai/api/v1/models（OpenRouter 正确路径）。"""
+    base = (base_url or DEFAULT_BASE_URL).strip().rstrip("/")
+    if base.endswith("/chat/completions"):
+        base = base[: -len("/chat/completions")]
+    if base.endswith("/v1"):
+        return base + "/models"
+    return base + "/v1/models"
+
+
+def list_models(base_url: str, api_key: str, timeout: int = 30) -> dict:
+    """拉取中继可用模型列表，供设置页在线填充模型下拉（替代手动输入）。
+    返回 {ok, models:[id...], latency_ms, error, detail}。"""
+    url = resolve_models_url(base_url)
+    key = (api_key or "").strip()
+    if not key:
+        return {"ok": False, "models": [], "latency_ms": 0, "error": "未填写 API key"}
+    req = urllib.request.Request(url, headers={"Authorization": "Bearer " + key})
+    t0 = time.time()
+    try:
+        raw = urllib.request.urlopen(req, timeout=timeout).read().decode("utf-8", "ignore")
+        latency = int((time.time() - t0) * 1000)
+        d = json.loads(raw)
+        data = d.get("data") if isinstance(d, dict) else None
+        ids = sorted({m.get("id").strip() for m in (data or [])
+                      if isinstance(m, dict) and isinstance(m.get("id"), str) and m.get("id").strip()})
+        if ids:
+            return {"ok": True, "models": ids, "latency_ms": latency, "count": len(ids)}
+        if isinstance(d, dict) and d.get("error"):
+            return {"ok": False, "models": [], "latency_ms": latency,
+                    "error": str(d["error"])[:120], "detail": json.dumps(d)[:200]}
+        return {"ok": False, "models": [], "latency_ms": latency,
+                "error": "响应无模型列表（中继异常？）", "detail": json.dumps(d)[:200]}
+    except urllib.error.HTTPError as e:
+        detail = ""
+        try:
+            detail = e.read().decode("utf-8", "ignore")[:200]
+        except Exception:
+            pass
+        return {"ok": False, "models": [], "latency_ms": int((time.time() - t0) * 1000),
+                "error": f"HTTP {e.code}", "detail": detail}
+    except Exception as e:
+        return {"ok": False, "models": [], "latency_ms": int((time.time() - t0) * 1000),
+                "error": repr(e)[:200]}
 
 
 def resolve() -> dict:

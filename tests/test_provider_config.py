@@ -104,16 +104,50 @@ def test_load_save_roundtrip_and_corrupt():
             pc.PROVIDER_FILE = old
 
 
+def test_models_url_and_list_models():
+    """模型列表在线获取（GET /v1/models）：URL 规整 + 解析 + 异常分支。"""
+    cases = {
+        "https://new-api.abrdns.com": "https://new-api.abrdns.com/v1/models",
+        "https://x.example/v1": "https://x.example/v1/models",
+        "https://x.example/v1/chat/completions": "https://x.example/v1/models",
+        "https://openrouter.ai/api": "https://openrouter.ai/api/v1/models",
+        "": "https://new-api.abrdns.com/v1/models",
+    }
+    for raw, want in cases.items():
+        got = pc.resolve_models_url(raw)
+        assert got == want, f"resolve_models_url({raw!r}) = {got!r}, 期望 {want!r}"
+
+    real_urlopen = pc.urllib.request.urlopen
+    try:
+        def fake(body):
+            pc.urllib.request.urlopen = lambda req, timeout: io.BytesIO(body)
+        fake(json.dumps({"data": [{"id": "m2"}, {"id": "m1"}, {"id": "m1"},
+                                   {"id": ""}, "bad-item"]}).encode())
+        r = pc.list_models("https://x.example", "k")
+        assert r["ok"] is True and r["models"] == ["m1", "m2"], f"去重排序失败: {r}"
+        fake(json.dumps({"error": {"message": "invalid token"}}).encode())
+        r = pc.list_models("https://x.example", "k")
+        assert r["ok"] is False and "invalid token" in r["error"]
+        fake(b"not json")
+        r = pc.list_models("https://x.example", "k")
+        assert r["ok"] is False, "非 JSON 响应应判失败"
+        r = pc.list_models("https://x.example", "  ")
+        assert r["ok"] is False and "key" in r["error"]
+    finally:
+        pc.urllib.request.urlopen = real_urlopen
+
+
 def run() -> bool:
     test_resolve_chat_url()
     test_normalize()
     test_resolve_dual_chain()
     test_test_model_no_false_positive()
+    test_models_url_and_list_models()
     test_load_save_roundtrip_and_corrupt()
     return True
 
 
 if __name__ == "__main__":
     run()
-    print("[PASS] provider_config 回归（双链/base_url规整/normalize/test_model防假阳性/损坏留档）")
+    print("[PASS] provider_config 回归（双链/base_url规整/normalize/test_model防假阳性/模型列表/损坏留档）")
     sys.exit(0)
