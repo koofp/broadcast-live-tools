@@ -60,8 +60,10 @@ def call_llm(prompt, key=None, model=None, chat_url=None, max_tokens=None):
     if not key:
         raise RuntimeError("未配置 API key（设置页 AI 供应商 / OPENROUTER_API_KEY / api_key.txt / 注册表 均为空）")
     text, fr, reasoning, usage = _chat(prompt, key, model, chat_url, max_tokens)
-    if not text and reasoning and fr == "length":
-        # think 模型可能把额度耗在 reasoning_content（content=null）→ 提高上限再试一次
+    if not text and fr == "length":
+        # think 模型可能把额度耗在思考上（content=null）→ 提高上限再试一次。
+        # 不再要求 reasoning 非空：部分中继（实测 new-api + DeepSeek-V4-Pro-0813-think）
+        # 不回传 reasoning_content 字段，思考token照样烧光——凭 finish=length 即应提额。
         text, fr, _, _ = _chat(prompt, key, model, chat_url, max(64000, max_tokens * 2))
     if not text:
         raise RuntimeError(f"空content finish={fr} usage={json.dumps(usage)[:160]}")
@@ -95,7 +97,8 @@ def summarize(srt_path: Path, prompt_tpl: str, key: str) -> bool:
         try:
             t0 = time.time()
             text = call_oxalpha(prompt, key)
-            tmp = str(out) + ".tmp"
+            # tmp 带进程 PID：手动运行与计划任务无 run.lock 互斥，同名 tmp 会互相覆盖（实测竞争场景）
+            tmp = f"{out}.tmp{os.getpid()}"
             Path(tmp).write_text(text, encoding="utf-8")
             os.replace(tmp, out)
             print(f"[done] {out.name} | {time.time()-t0:.0f}s", flush=True)

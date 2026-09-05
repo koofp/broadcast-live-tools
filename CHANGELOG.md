@@ -3,6 +3,30 @@
 > 变更史。新变更记录到这里（按日期倒序），runbook 只保留"当前状态"不再堆时序日志。
 > 格式参考 Keep a Changelog；提交号可 `git show <hash>` 查看全文。
 
+## 2026-09-05 · 全链路模拟测试执行 + 三个实测抓出的修复
+
+- **test**：按评审定稿执行可自治部分（子代理对抗评审原方案后定稿：真实数据零删除全走
+  `_selftest` 副本、L4 并入主流程、第三方房间录制否决）。执行结果——selftest 六步 PASS；
+  3 段真实 srt 副本经 DeepSeek-V4-Pro-0813-think 出稿（五段结构齐全）+ qa_check PASS；
+  场级总结带指纹产出；LLM 失败路径 401/不可达/429 退避（60s 精确）全符合预期；
+  面板七页全过；cleanup 冒烟顺带实测锁重试；锁竞争 exit3/-Force 强抢/断电恢复 PASS。
+  覆盖缺口如实记录：真实开播检测延迟、600s 轮询兜底、cleanup 全路径（磁盘充足不可达）、
+  场次自然关闭（用 --force 等效覆盖）。
+- **fix(llm) 提额条件**：think 模型经 new-api 中继不回传 `reasoning_content` 字段，
+  思考烧光 max_tokens 后 content=null+finish=length——旧条件 `not text and reasoning
+  and fr=="length"` 永不触发，实测一段 4 连败各烧 16K token。改为仅凭 `fr=="length"`
+  即提额重试（64K）。
+- **fix(race) 原子写 tmp 加 PID**：手动运行与计划任务无 run.lock 互斥，同名
+  `.tmp` 双进程互相覆盖（实测 16-30-00 段 process_all 与手动总结真实重叠，侥幸错开）。
+  summarize_host / transcribe_host 的 tmp 改 `name.tmp<pid>`。
+- **fix(lock) run.lock 真独占（P1）**：断电恢复测试抓出——acquire 用 CRT `open("x")`
+  （共享全允许），lock_info 探测用 `open("r+b")` 能打开活锁文件 → 把 Worker 活锁当
+  陈旧锁删除 → 互斥失效 + release unlink 撞 delete-pending 抛 PermissionError 误标
+  任务 failed。Python 侧改 `CreateFileW` share=0 真独占（与 process_all.ps1 的
+  FileStream None 共享互认），acquire/探测/释放三处收口；新增 tests/test_run_lock.py
+  （verify.ps1 接入）。跨语言互斥实测：Python 持锁 → process_all exit 3 ✓。
+- 另：_fetch 超时与 TLS 中断的排障提示分流（超时=中继慢，不再误导去查 Clash）。
+
 ## 2026-09-05 · LLM 请求层统一 _fetch（直连回退 + Clash TUN 排障提示）
 
 - **fix(provider)**：设置页「测试当前模型」报 `SSLEOFError`——现场取证定位：Clash TUN

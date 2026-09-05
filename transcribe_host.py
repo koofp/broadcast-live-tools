@@ -51,7 +51,8 @@ def transcribe(video: str, model, language="zh"):
         lines = ["1\n00:00:00,000 --> 00:00:01,000\n[无语音内容]\n"]
         print(f"[warn] {os.path.basename(video)} 无语音，写占位 srt", flush=True)
 
-    tmp = str(srt_path) + ".tmp"
+    # tmp 带进程 PID：手动运行与计划任务无 run.lock 互斥，同名 tmp 会互相覆盖
+    tmp = f"{srt_path}.tmp{os.getpid()}"
     Path(tmp).write_text("\n".join(lines), encoding="utf-8")
     os.replace(tmp, srt_path)
     el = time.time() - t0

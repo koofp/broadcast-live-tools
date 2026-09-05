@@ -75,7 +75,11 @@ def _fetch(url: str, data: bytes | None, headers: dict, timeout: int) -> tuple[b
             raise
         except Exception as e:
             last = e
-    raise RuntimeError(f"{repr(last)[:160]} —— {_SSL_HINT}")
+    # 超时=服务端慢（think 模型长思考/过载），TLS/连接中断才指向本机代理分流——提示分开给，防误导
+    hint = ("中继响应超时（think 模型长思考或服务过载，可稍后重试）"
+            if isinstance(last, TimeoutError)
+            else _SSL_HINT)
+    raise RuntimeError(f"{repr(last)[:160]} —— {hint}")
 
 
 def _legacy_key() -> tuple[str, str]:

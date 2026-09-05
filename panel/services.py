@@ -3,6 +3,8 @@
 规范：pathlib+utf-8；subprocess 显式编码+cwd；tail 反向截断读取；进度正则唯一出处。
 """
 import html as _html
+import ctypes
+import ctypes.wintypes as wt
 import json
 import os
 import provider_config
@@ -35,7 +37,7 @@ LOG_DIR = ROOT / "logs" / "pipeline"
 
 _PLACEHOLDER_MARK = "[无语音内容]"
 QUEUE_LOCK = threading.Lock()
-_run_lock_stream = None
+_run_lock_handle = None
 
 _PROGRESS_RE = re.compile(r"\.\.\.(\d{2}:\d{2}:\d{2}),\d+ \((\d+)条\)")
 
@@ -52,7 +54,9 @@ def _ps(script: str, *args: str, timeout: int = 300) -> str:
 
 
 def lock_info() -> dict:
-    """锁的结构化信息。探测方式=独占打开（进程崩溃遗留的陈旧锁自动清除）"""
+    """锁的结构化信息。探测方式=CreateFileW 独占打开（share=0）：能打开=无任何持有者
+    （陈旧锁，清除）；打不开=活锁在持（与 process_all.ps1 的 FileStream 语义互认）。
+    旧 CRT open 探测因共享全允许，会把 Worker 活锁误判为陈旧并删除（实测竞争 bug）。"""
     if not LOCK.exists():
         return {"locked": False}
     age = round(time.time() - LOCK.stat().st_mtime)
@@ -61,15 +65,23 @@ def lock_info() -> dict:
         holder = LOCK.read_text(encoding="utf-8", errors="ignore")[:80]
     except Exception:
         pass
-    # 独占探测：能打开说明持有进程已死 → 清除陈旧锁
     try:
-        with open(LOCK, "r+b"):
-            pass
-        LOCK.unlink(missing_ok=True)
-        return {"locked": False, "stale_cleaned": True}
-    except PermissionError:
+        h = _win_open_exclusive(LOCK, create_new=False)
+    except FileNotFoundError:
+        return {"locked": False}
+    except OSError:
         return {"locked": True, "age_sec": age, "holder": holder,
                 "force_available": age > 7200}
+    else:   # 独占打开成功 = 确无持有者 → 陈旧锁，清除
+        try:
+            _WIN_K32.CloseHandle(h)
+        except Exception:
+            pass
+        try:
+            LOCK.unlink(missing_ok=True)
+        except PermissionError:
+            pass   # 删除挂起未释放：下次探测再清
+        return {"locked": False, "stale_cleaned": True}
 
 
 _ctn_cache: dict = {"ts": 0.0, "val": ""}
@@ -635,27 +647,66 @@ def defer_job(job_id: str):
                 return
 
 
+_WIN_K32 = None
+
+
+def _win_open_exclusive(path: Path, create_new: bool):
+    """CreateFileW 独占语义（share=0），与 process_all.ps1 的 FileStream 'None' 共享对齐。
+    create_new=True → 原子"判存+创建"（acquire）；False → 打开既有文件（陈旧锁探测）。
+    返回 win32 句柄；文件已存在抛 FileExistsError，不存在抛 FileNotFoundError，
+    被活锁持有抛 PermissionError。CRT open() 的共享模式是全允许，做不了真互斥
+    （实测竞争：lock_info 探测把 Worker 活锁当死锁删掉 → 互斥失效+release PermissionError）。
+    仅限 Windows（本项目运行环境）。"""
+    global _WIN_K32
+    if _WIN_K32 is None:
+        k32 = ctypes.windll.kernel32
+        k32.CreateFileW.restype = ctypes.c_void_p
+        k32.CreateFileW.argtypes = [wt.LPCWSTR, wt.DWORD, wt.DWORD, wt.LPVOID,
+                                    wt.DWORD, wt.DWORD, wt.HANDLE]
+        _WIN_K32 = k32
+    invalid = ctypes.c_void_p(-1).value
+    h = _WIN_K32.CreateFileW(str(path), 0xC0000000, 0, None,
+                             1 if create_new else 3, 0, None)  # CREATE_NEW / OPEN_EXISTING
+    if h is None or h == invalid:
+        err = _WIN_K32.GetLastError()
+        if err in (80, 183):      # ERROR_FILE_EXISTS / ERROR_ALREADY_EXISTS
+            raise FileExistsError(err)
+        if err == 2:              # ERROR_FILE_NOT_FOUND
+            raise FileNotFoundError(err)
+        raise PermissionError(err)   # 32=sharing violation（活锁持有）等
+    return h
+
+
 def acquire_run_lock() -> bool:
     """非阻塞独占获取 run.lock（Worker 与 process_all.ps1 的互斥点）。
-    open("x") 本身即原子"判锁+获取"，不再前置 lock_info() 探测（消除 TOCTOU 窗口）。"""
+    CreateFileW CREATE_NEW 即原子"判锁+获取"，且 share=0 让 lock_info 的独占探测
+    能正确识别"活锁"，不再误删（TOCTOU 与误删双消除）。"""
+    global _run_lock_handle
     try:
-        global _run_lock_stream
-        _run_lock_stream = open(LOCK, "x")
-        _run_lock_stream.write(f"worker pid={os.getpid()} t={time.strftime('%H:%M:%S')}")
-        _run_lock_stream.flush()
-        return True
-    except FileExistsError:
+        _run_lock_handle = _win_open_exclusive(LOCK, create_new=True)
+    except (FileExistsError, PermissionError, FileNotFoundError, OSError):
         return False
+    try:   # 锁戳仅诊断用，失败不影响锁持有
+        written = ctypes.c_ulong(0)
+        msg = f"worker pid={os.getpid()} t={time.strftime('%H:%M:%S')}".encode()
+        _WIN_K32.WriteFile(_run_lock_handle, msg, len(msg), ctypes.byref(written), None)
     except Exception:
-        return False
+        pass
+    return True
 
 
 def release_run_lock():
+    global _run_lock_handle
+    h, _run_lock_handle = _run_lock_handle, None
+    if h is not None:
+        try:
+            ctypes.windll.kernel32.CloseHandle(h)
+        except Exception:
+            pass
     try:
-        _run_lock_stream.close()
-    except Exception:
-        pass
-    LOCK.unlink(missing_ok=True)
+        LOCK.unlink(missing_ok=True)
+    except PermissionError:
+        pass   # 句柄刚关、删除挂起尚未释放时不再叠加异常（任务结果已由 finish_job 落盘）
 
 
 def pop_next_job() -> dict | None:

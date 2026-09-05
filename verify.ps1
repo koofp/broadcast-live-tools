@@ -15,7 +15,7 @@ foreach ($f in 'panel.py','panel\main.py','panel\services.py','session.py',
 }
 
 # 1.5) 单元测试（无需 API/网络的纯逻辑回归；失败保留细节便于排查）
-foreach ($t in 'tests\test_merge_archived.py','tests\test_provider_config.py') {
+foreach ($t in 'tests\test_merge_archived.py','tests\test_provider_config.py','tests\test_run_lock.py') {
     $uOut = python $t 2>&1
     if ($LASTEXITCODE -ne 0) { $fail += ("unit: $t → " + ($uOut | Select-Object -Last 2) -join ' ') }
 }

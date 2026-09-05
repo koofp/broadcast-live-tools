@@ -162,6 +162,14 @@ def test_fetch_fallback():
             assert False, "应抛 RuntimeError"
         except RuntimeError as e:
             assert "Clash" in str(e) and "DIRECT" in str(e)
+        # ③b 超时 → 提示应指向中继慢而非 Clash（防误导排障）
+        pc._DIRECT_OPENER = type("T", (), {"open": lambda self, r, timeout: (_ for _ in ()).throw(
+            TimeoutError("The read operation timed out"))})()
+        try:
+            pc._fetch("https://t.example/v1", None, {}, 5)
+            assert False, "应抛 RuntimeError"
+        except RuntimeError as e:
+            assert "超时" in str(e) and "Clash" not in str(e)
         # ④ HTTPError（已拿到服务端响应）不重试，原样上抛
         import urllib.error as _ue
         def _raise_http(*a, **k):
@@ -177,6 +185,27 @@ def test_fetch_fallback():
         pc._HOST_DIRECT.clear(); pc._HOST_DIRECT.update(real_hosts)
 
 
+def test_call_llm_think_fallback():
+    """实测回归：new-api + DeepSeek-V4-Pro-0813-think 不回传 reasoning_content，
+    思考烧光 max_tokens 后 content=null finish=length —— 必须凭 length 提额重试，
+    不能再要求 reasoning 非空（2026-09-05 15-30-00 段 4 连败的根因）。"""
+    import summarize_host as sh
+    calls = []
+    def fake_chat(prompt, key, model, chat_url, max_tokens):
+        calls.append(max_tokens)
+        if len(calls) == 1:
+            return "", "length", "", {"completion_tokens": max_tokens}   # 无 reasoning！
+        return "总结内容", "stop", "", {}
+    real = sh._chat
+    sh._chat = fake_chat
+    try:
+        out = sh.call_llm("p", key="k", model="m", chat_url="https://x.example/v1/chat/completions")
+        assert out == "总结内容"
+        assert calls == [16000, 64000], f"提额序列错误: {calls}"
+    finally:
+        sh._chat = real
+
+
 def run() -> bool:
     test_resolve_chat_url()
     test_normalize()
@@ -184,11 +213,12 @@ def run() -> bool:
     test_test_model_no_false_positive()
     test_models_url_and_list_models()
     test_fetch_fallback()
+    test_call_llm_think_fallback()
     test_load_save_roundtrip_and_corrupt()
     return True
 
 
 if __name__ == "__main__":
     run()
-    print("[PASS] provider_config 回归（双链/base_url规整/normalize/test_model防假阳性/模型列表/直连回退/损坏留档）")
+    print("[PASS] provider_config 回归（双链/规整/normalize/防假阳性/模型列表/直连回退/提额/损坏留档）")
     sys.exit(0)
