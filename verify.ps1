@@ -62,11 +62,19 @@ if (-not $up) {
     if (-not $up) { $fail += '面板拉起失败（15 秒内未上线），详见 logs\panel-stdout.log' }
 }
 if ($up) {
-    # 页面渲染冒烟：/api 200 不代表 Jinja 页面能渲染（曾出现模板 UndefinedError 500 探不到）
+    # 页面渲染冒烟：/api 200 不代表 Jinja 页面能渲染（曾出现模板 UndefinedError 500 探不到）。
+    # 内容断言用设置页特有元素 id（曾用 'AI'——base.html 的 <main class="main"> 使其恒真无鉴别力）
     try {
         $r2 = Invoke-WebRequest 'http://127.0.0.1:9090/settings' -UseBasicParsing -TimeoutSec 10
-        if ($r2.StatusCode -ne 200 -or $r2.Content -notmatch 'AI') { $fail += '面板 /settings 渲染异常' }
+        if ($r2.StatusCode -ne 200 -or $r2.Content -notmatch 'pv-base') { $fail += '面板 /settings 渲染异常' }
     } catch { $fail += "面板 /settings 请求失败: $($_.Exception.Message)" }
+    # 仪表盘页（本轮改动 fakeip 三态卡片）+ status JSON 新契约字段
+    try {
+        $r3 = Invoke-WebRequest 'http://127.0.0.1:9090/' -UseBasicParsing -TimeoutSec 10
+        if ($r3.StatusCode -ne 200 -or $r3.Content -notmatch 'c-fakeip') { $fail += '面板仪表盘渲染异常' }
+        $r4 = Invoke-WebRequest 'http://127.0.0.1:9090/api/status' -UseBasicParsing -TimeoutSec 10
+        if ("$($r4.Content)" -notmatch 'fakeip_state') { $fail += '/api/status 缺 fakeip_state 字段（status.ps1 新契约）' }
+    } catch { $fail += "面板仪表盘/status 请求失败: $($_.Exception.Message)" }
 }
 
 if ($fail) {

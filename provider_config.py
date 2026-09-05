@@ -202,7 +202,7 @@ def list_models(base_url: str, api_key: str, timeout: int = 30) -> dict:
         return {"ok": False, "models": [], "latency_ms": 0, "error": "未填写 API key"}
     t0 = time.time()
     try:
-        raw, _via = _fetch(url, None, {"Authorization": "Bearer " + key}, timeout)
+        raw, _via = fetch(url, None, {"Authorization": "Bearer " + key}, timeout)
         latency = int((time.time() - t0) * 1000)
         d = json.loads(raw.decode("utf-8", "ignore"))
         data = d.get("data") if isinstance(d, dict) else None
@@ -275,7 +275,7 @@ def test_model(base_url: str, api_key: str, model: str, timeout: int = 90) -> di
     headers = {"Authorization": "Bearer " + key, "Content-Type": "application/json"}
     t0 = time.time()
     try:
-        raw, _via = _fetch(chat_url, body, headers, timeout)
+        raw, _via = fetch(chat_url, body, headers, timeout)
         latency = int((time.time() - t0) * 1000)
         d = json.loads(raw.decode("utf-8", "ignore"))
         if "choices" in d and d["choices"]:
