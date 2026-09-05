@@ -371,8 +371,10 @@ def sessions_index() -> dict:
         if sf.exists():
             try:
                 out[d.name] = json.loads(sf.read_text(encoding="utf-8")).get("sessions", [])
-            except Exception:
-                pass
+            except Exception as e:
+                # 统一失败语义：解析失败按"无缓存"处理（消费方 fail-open），但留痕不静默
+                print(f"[sessions] {d.name} sessions.json 解析失败，按无缓存处理: "
+                      f"{repr(e)[:120]}", flush=True)
     return out
 
 
@@ -512,6 +514,7 @@ def write_prompt(room: str, content: str) -> bool:
 def summaries_list(query: str = "") -> list:
     out = []
     items = []
+    sidx = sessions_index()   # 单次读取全部房间场次缓存（原每条目/每房间各读一次 sessions.json）
     for s in sorted(VIDEOS.glob("*/*.summary.md"),
                     key=lambda p: p.stat().st_mtime, reverse=True):
         items.append((s, "segment"))
@@ -530,17 +533,12 @@ def summaries_list(query: str = "") -> list:
                 "ignored": False}
         if kind == "session":
             # 场次条目增强：标题/时间范围/段数（sessions.json）+ 一句话（summary 文件）
-            try:
-                data = json.loads((VIDEOS / room / "_sessions" / "sessions.json")
-                                  .read_text(encoding="utf-8"))
-                sess = next((x for x in data.get("sessions", []) if x["id"] == base), {})
-                item["title"] = sess.get("title", "")
-                item["time_range"] = (f"{sess.get('start','')[5:16]}–"
-                                      f"{sess.get('end_est','')[11:16]}")
-                item["segment_count"] = sess.get("segment_count")
-                item["ignored"] = bool(sess.get("ignored"))
-            except Exception:
-                pass
+            sess = next((x for x in sidx.get(room, []) if x.get("id") == base), {})
+            item["title"] = sess.get("title", "")
+            item["time_range"] = (f"{sess.get('start','')[5:16]}–"
+                                  f"{sess.get('end_est','')[11:16]}")
+            item["segment_count"] = sess.get("segment_count")
+            item["ignored"] = bool(sess.get("ignored"))
             try:
                 item["one_liner"] = _first_section_line(
                     s.read_text(encoding="utf-8", errors="ignore"), "一句话总结")
@@ -553,21 +551,19 @@ def summaries_list(query: str = "") -> list:
     # 总结库只显示"1 场 = 1 条"。2026-09-05 二次实锤：原实现是"房间级"隐藏
     # （同房间存在任意场级总结就吞掉全部段级），sessions.json stale 时 14323359 的
     # 15 条段级总结整库隐身。现按"有场级总结文件的场次所列段"精确隐藏（收敛回本注释
-    # 的原始语义）；sessions.json 缺失/损坏时 fail-open 全部可见。隐藏≠删除：
-    # 直接 URL 仍可经 find_summary 访问。
+    # 的原始语义）；覆盖集来自 sessions_index（解析失败该房间无缓存 → fail-open 全可见，
+    # sessions_index 内留痕）。隐藏≠删除：直接 URL 仍可经 find_summary 访问。
+    # 语义定案：被标记 ignored 的场级总结不作为覆盖者（用户要求回到段级视图）。
     covered: dict[str, set] = {}
-    for room in {r["room"] for r in out if r["kind"] == "session"}:
-        try:
-            data = json.loads((VIDEOS / room / "_sessions" / "sessions.json")
-                              .read_text(encoding="utf-8"))
-            for sess in data.get("sessions", []):
-                if not (VIDEOS / room / "_sessions" / f"{sess.get('id')}.summary.md").exists():
-                    continue   # 覆盖集以场级 summary 文件存在为准，光有场次记录不算
-                covered.setdefault(room, set()).update(
-                    Path(s["name"]).stem for s in sess.get("segments", []) if s.get("name"))
-        except Exception as e:
-            print(f"[summaries] {room} sessions.json 读取失败，该房间段级按可见处理: "
-                  f"{repr(e)[:120]}", flush=True)
+    for room, sessions in sidx.items():
+        for sess in sessions:
+            sid = sess.get("id")
+            if not sid or sess.get("ignored"):
+                continue   # 无 id 防御：避免拼出 ".summary.md" 之类的畸形路径
+            if not (VIDEOS / room / "_sessions" / f"{sid}.summary.md").exists():
+                continue   # 覆盖集以场级 summary 文件存在为准，光有场次记录不算
+            covered.setdefault(room, set()).update(
+                Path(s["name"]).stem for s in sess.get("segments", []) if s.get("name"))
     out = [r for r in out if r["kind"] == "session" or r["base"] not in covered.get(r["room"], set())]
     # 场次排前排
     out.sort(key=lambda r: (0 if r["kind"] == "session" else 1,

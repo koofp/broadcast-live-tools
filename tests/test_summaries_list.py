@@ -44,36 +44,50 @@ def build_fixture(tmp: Path):
     # 房间 444：有场级 summary 但 sessions.json 缺失 → fail-open：段级可见、场级条目在
     _mk(tmp / "444" / "444_20260826-02-25-20.summary.md")
     _mk(tmp / "444" / "_sessions" / "20260826_022520.summary.md")
-    return covered, uncovered
+    # 房间 555：场级 summary 被标记 ignored → 不作为覆盖者，段级可见（语义定案：回到段级视图）
+    ign = ["555_20260827-10-00-00", "555_20260827-10-30-00"]
+    for st in ign:
+        _mk(tmp / "555" / f"{st}.summary.md")
+    _mk(tmp / "555" / "_sessions" / "20260827_100000.summary.md")
+    _mk(tmp / "555" / "_sessions" / "sessions.json", json.dumps({"sessions": [{
+        "id": "20260827_100000", "room": "555", "ignored": True,
+        "segments": [{"name": f"{st}.mp4", "start": "x"} for st in ign]}]}))
+    return covered, uncovered, ign
 
 
 def run() -> bool:
-    tmp = Path(tempfile.mkdtemp(prefix="bilive_sumtest_"))
-    services.VIDEOS = tmp
-    try:
-        covered, uncovered = build_fixture(tmp)
-        rows = services.summaries_list()
-        by = {(r["room"], r["kind"], r["base"]) for r in rows}
-        # 111：场级在；被覆盖 5 段隐藏；未覆盖 3 段可见（房间级旧规则下这里必红）
-        assert ("111", "session", "20260825_233058") in by, "场级条目应在"
-        for st in covered:
-            assert ("111", "segment", st) not in by, f"被覆盖段应隐藏: {st}"
-        for st in uncovered:
-            assert ("111", "segment", st) in by, f"未覆盖段应可见（旧房间级规则误伤）: {st}"
-        # 场级元数据增强不回归（title 来自 sessions.json）
-        meta = next(r for r in rows if (r["room"], r["kind"], r["base"])
-                    == ("111", "session", "20260825_233058"))
-        assert meta["title"] == "覆盖场" and meta["segment_count"] == 5
-        # 222：无场级 summary → 段级可见
-        assert ("222", "segment", "222_20260825-19-23-13") in by, "222 段级被误藏"
-        # 333：无 _sessions → 可见
-        assert ("333", "segment", "333_20260826-01-55-24") in by, "333 段级被误藏"
-        # 444：sessions.json 缺失 → fail-open（段级可见 + 场级条目仍在）
-        assert ("444", "segment", "444_20260826-02-25-20") in by, "444 段级被误藏"
-        assert ("444", "session", "20260826_022520") in by, "444 场级条目应在"
-        return True
-    finally:
-        services.VIDEOS = REAL_VIDEOS   # 必须还原（test_run_lock 先例）
+    with tempfile.TemporaryDirectory(prefix="bilive_sumtest_") as td:
+        services.VIDEOS = Path(td)   # 退出即自动清理（评审：mkdtemp 曾泄漏 %TEMP%）
+        try:
+            covered, uncovered, ign = build_fixture(Path(td))
+            rows = services.summaries_list()
+            by = {(r["room"], r["kind"], r["base"]) for r in rows}
+            # 111：场级在；被覆盖 5 段隐藏；未覆盖 3 段可见（房间级旧规则下这里必红）
+            assert ("111", "session", "20260825_233058") in by, "场级条目应在"
+            for st in covered:
+                assert ("111", "segment", st) not in by, f"被覆盖段应隐藏: {st}"
+            for st in uncovered:
+                assert ("111", "segment", st) in by, f"未覆盖段应可见（旧房间级规则误伤）: {st}"
+            # 场级元数据增强不回归（title 来自 sessions.json）
+            meta = next(r for r in rows if (r["room"], r["kind"], r["base"])
+                        == ("111", "session", "20260825_233058"))
+            assert meta["title"] == "覆盖场" and meta["segment_count"] == 5
+            # 222：无场级 summary → 段级可见
+            assert ("222", "segment", "222_20260825-19-23-13") in by, "222 段级被误藏"
+            # 333：无 _sessions → 可见
+            assert ("333", "segment", "333_20260826-01-55-24") in by, "333 段级被误藏"
+            # 444：sessions.json 缺失 → fail-open（段级可见 + 场级条目仍在）
+            assert ("444", "segment", "444_20260826-02-25-20") in by, "444 段级被误藏"
+            assert ("444", "session", "20260826_022520") in by, "444 场级条目应在"
+            # 555：ignored 场级不覆盖 → 段级可见 + ignored 徽章字段为真
+            for st in ign:
+                assert ("555", "segment", st) in by, f"ignored 场的段级应可见: {st}"
+            meta555 = next(r for r in rows if (r["room"], r["kind"], r["base"])
+                           == ("555", "session", "20260827_100000"))
+            assert meta555["ignored"] is True
+            return True
+        finally:
+            services.VIDEOS = REAL_VIDEOS   # 必须还原（test_run_lock 先例）
 
 
 if __name__ == "__main__":
