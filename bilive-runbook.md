@@ -149,7 +149,7 @@ docker run -itd --name bilive_docker --restart unless-stopped \
 - 编码链统一 UTF8：process_all [Console]::OutputEncoding + 四个 py stdout.reconfigure
   （此前 GBK 日志乱码破坏面板进度正则 `(N条)`）
 - cleanup v3：占位段(无语音)写入 summary 后即放行清理（护栏 mp4≥1MB），消除磁盘静默泄漏
-- 红牌留痕：fake-ip+停摆同时出现时写 logs/pipeline/alert.log（无人看仪表盘也有据可查）
+- 红牌留痕：劫持+确认在录+停摆 三者同现时写 logs/pipeline/alert.log（2026-09-05 三态化，见 §5.7；无人看仪表盘也有据可查）
 - 前端加固：App.esc 转义动态拼入 innerHTML 的外部数据；viewSum 改用服务端转义 HTML；
   settings 页 `$('save-state')` 死引用修复
 
@@ -230,6 +230,10 @@ Python 侧锁 = `CreateFileW share=0` 真独占（services.py），与 PS FileSt
 
 **③ 测试记录落盘惯例**：演练结论（PASS/FAIL/覆盖缺口）记 CHANGELOG 对应日条目；
 抓出的 bug → 修复 + tests/ 单测固化。未落盘的"已通过"视为无效。
+**④ 评审-修复循环五步（固化）**：verify → 三视角子代理审查（架构师/怀疑者/执行者，
+各自先读码再发言）→ P1 全修/P2 择修（每项写根因）→ 单测固化 → CHANGELOG+runbook 落盘。
+**⑤ 备份集合必须 ⊇ 变更集合**：备份/快照只保护要动的对象，无参命令（如 session.py
+  全房间重算）的变更面=全部房间，备份范围按命令实参算而非按计划文本算（2026-09-05 实训）。
 
 **2026-09-05 执行快照**：selftest 六步 PASS；真实副本×3 过 DeepSeek-V4-Pro-0813-think
 （qa_check PASS，单段 116~181s）；LLM 失败路径 401/不可达/429 退避 60s 符合预期；
@@ -264,6 +268,8 @@ python session.py --split 8139918 <ID> <段文件名> # 在该段处强制切分
 - 存储：`Videos/<房间>/_sessions/sessions.json` + `<场次ID>.summary.md`
 - 场级总结头部带段指纹（`段数:名单哈希`）——新增/删除段后自动判 stale，重跑即刷新
 - 触发条件：场次已关闭（末段>60min）且 ≥3 段；LLM 调用复用 429 长退避与原子写
+- 触发方式：**仅 CLI**（`--room X --summarize`）——面板无场级总结入口，process_all
+  每轮只重算缓存不生成场级总结（429 退避会占 run.lock，2026-09-05 定案）
 - 段被 cleanup 归档后，场次元数据标 archived 保留（场级总结不因清理失效）
 - 纠错持久化于 `_sessions/overrides.json`（boundaries/merged/titles），重算后仍生效
 - 面板总结库：场次条目带徽章，阅读页含段级附录清单
@@ -278,8 +284,8 @@ python session.py --split 8139918 <ID> <段文件名> # 在该段处强制切分
 
 | 组件 | 用途 | 触发 |
 |---|---|---|
-| `status.ps1` | 红黄绿监控：容器/进程/**fake-ip劫持指纹**/分段增长采样/磁盘可录天数/全房间积压；末尾输出 JSON | 手动（10秒） |
-| `process_all.ps1` | 幂等批处理：mp4∪孤儿flv 全房间遍历→small转写→AI总结（供应商走 provider.json）；FileStream崩溃安全锁(PID戳/2h强抢)；BelowNormal低优先级；日志 logs\pipeline\*.log(14天轮转)；失败自动进下轮 | **计划任务 bilive-pipeline 每30分钟** / 面板按钮 |
+| `status.ps1` | 红黄绿监控：容器/进程/**fake-ip劫持三态**（blrec探针判在录，JSON 带 fakeip_state）/分段增长采样/磁盘可录天数/全房间积压；红牌=劫持+在录+停摆 | 面板每20s刷新线程 / 手动（10秒） |
+| `process_all.ps1` | 幂等批处理：mp4∪孤儿flv 全房间遍历→small转写→AI总结（供应商走 provider.json）+ 场次缓存重算(session.py)；FileStream崩溃安全锁(PID戳/2h强抢)；BelowNormal低优先级；日志 logs\pipeline\*.log(14天轮转)；失败自动进下轮 | **计划任务 bilive-pipeline 每30分钟** / 面板按钮 |
 | `cleanup.ps1` | 归档清理 v3：删「已处理(真实段srt>1KB / 占位段有summary)+超48h」最旧段至200GB；_trash 7天回滚+keep白名单+单次20段上限；与 process_all 同锁(带锁戳)；删除留档 deleted.log | **计划任务 bilive-cleanup 每2小时**（<150GB 才实际删除）/ 面板按钮 / 手动 -Apply |
 | `panel.py` | Web面板 127.0.0.1:9090：四段流程条仪表盘、录制房间卡、跨房间分段表+徽章、任务队列+Worker、提示词编辑器、总结/字幕阅读 | **手动**：桌面「启动面板」一键拉起（计划任务已禁用；端口占用守卫防双开） |
 | 计划任务 | bilive-pipeline(每30分钟) ✅Ready；bilive-cleanup(每2小时) ✅Ready；bilive-panel ❌已禁用(2026-08-23 用户选手动) | — |
@@ -381,7 +387,7 @@ broadcast-live-tools/
 ├── panel/                     # Web 面板 v3.2（main.py 路由 / services.py 逻辑 / templates / static）
 ├── panel.py                   # 面板薄入口（端口占用守卫：已有实例则 exit 0）
 ├── 启动面板.cmd               # 桌面一键启动（检测 9090→拉起→开浏览器）；计划任务 bilive-panel 已禁用
-├── process_all.ps1            # 两阶段批处理：规划→批量转写(权重单次加载)→批量总结（计划任务每30分钟）
+├── process_all.ps1            # 每轮管线：场次重算→规划→批量转写(权重单次加载)→批量总结（计划任务每30分钟）
 ├── cleanup.ps1                # 归档清理 v3（计划任务 bilive-cleanup 每2小时；占位段已放行，mp4≥1MB 护栏）
 ├── status.ps1                 # 监控：容器/DNS劫持/磁盘/积压；红牌落盘 alert.log（30分钟节流）
 ├── verify.ps1                 # ⚡一键回归门禁（改码后必跑）：py编译/ps解析/BOM/产物/toml/面板冒烟
@@ -421,7 +427,7 @@ broadcast-live-tools/
 
 **通知**：`notify.ps1` = Windows Toast（落动作中心，错过可查）+ `logs/notify.log` 持久留痕，
 同一内容 30 分钟节流，Toast 失败自动降级仅日志。已接线四类事件：
-- status.ps1：劫持+停摆红牌（与 alert.log 同步）、磁盘不足 1 天
+- status.ps1：劫持+在录+停摆 红牌（与 alert.log 同步）、磁盘不足 1 天
 - process_all.ps1：批次结束有失败段（warn）
 - cleanup.ps1：清理执行（info）、清理后空间仍不足 160GB（warn）
 手动告警：`.\notify.ps1 -Title "..." -Text "..." [-Level info|warn|bad]`

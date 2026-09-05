@@ -3,6 +3,29 @@
 > 变更史。新变更记录到这里（按日期倒序），runbook 只保留"当前状态"不再堆时序日志。
 > 格式参考 Keep a Changelog；提交号可 `git show <hash>` 查看全文。
 
+## 2026-09-05 · 二轮审查（计划闭环四提交）+ 语义/边界修复
+
+三视角审查（代码/计划复盘/架构）结论：0×P0/P1（六提交核心语义经怀疑式排除均安全）；
+修复 3×P2 + 8×P3：
+- **fix(race) session.py save_json tmp 加 PID**：场次缓存现在被 计划任务/面板 toggle/手动
+  三方拉起（无统一互斥），固定名 tmp 双进程互写会落盘垃圾 JSON（对齐 summarize_host
+  已定案的 PID 后缀模式）。
+- **fix(data) merge_archived 整场归档重建**：整场段全被 cleanup 后该场从缓存蒸发，
+  违背 §5.99"元数据不蒸发"承诺；且场次重算自动化后暴露面上升。现以纯归档身份重建
+  （fingerprint 沿用旧值，场级总结不误判 stale），单测固化（幂等四场景）。
+- **fix(ux) ignored 场级不再覆盖段级**：忽略场级总结=回到段级视图（语义定案）。
+- **fix(guard) --summarize 数字参数守卫**：错误用法从 exit 0 静默空转改为 exit 2 + 指引。
+- **refactor(panel) summaries_list 复用 sessions_index**：sessions.json 解析点
+  O(items)→O(rooms) 单次读取，失败语义统一留痕；ignored/id 缺失防御入覆盖集。
+- **feat(status) unknown 盲区分支**：劫持+blrec 不可知+停摆 → 黄牌留痕 + warn 通知，
+  永不静默绿（评审 B3：当日实锤签名里 API 是活的，但该组合仍可能发生）。
+- **fix(verify) /settings 冒烟匹配串**：'AI' 对 `<main class="main">` 恒真无鉴别力 →
+  'pv-base'；补仪表盘页与 /api/status fakeip_state 字段探测。
+- **refactor(provider) 内部调用统一 fetch**（_fetch 仅作兼容别名，消除测试/插桩双名陷阱）。
+- **docs**：runbook 五处旧语义同步（§5.96/§5.7 两行/§5.100/§10/§5.99 触发方式）；
+  §5.98.1 固化"评审-修复循环五步"与"备份集合⊇变更集合"教训；README 决策项补全
+  （api_key.txt/1937830735）、段数口径 25→27（含 flv 孤儿段）。
+
 ## 2026-09-05 · 计划评审闭环：总结库可见性修复 + 场次自动化 + 告警三态化
 
 三视角评审（架构师/怀疑者/执行者）定稿执行，实锤并修正 v1 计划的三处假设错误：
@@ -19,7 +42,7 @@
 - **fix(session) 场次数据补齐**：14323359 重算为 4 场×5 段，补 3 场场级总结
   （首场指纹一致自动 skip）；总结库 8→11 条，08-27~09-01 内容重新可见。
 - **feat(status) 告警三态化**：红牌原条件 `fakeip AND stall` 在"无直播"时必然误报
-  （当日 3 连 BAD Toast 实锤）。新增 blrec 本地 API 录制探针（零外网依赖，4s 超时，
+  （当日 notify.log 实录 10 条 BAD）。新增 blrec 本地 API 录制探针（零外网依赖，4s 超时，
   PS5.1 哈希键引号/`@()` 包裹/显式超时三陷阱规避），`fakeip_state=recording|idle|unknown`
   落 JSON 透传面板；红牌收敛为 **劫持+确认在录+写入停滞** 三者同现（当日真实故障签名）；
   idle 时停摆改黄牌"下播待机"。实测：同一数据态从 3 连红牌变为 `ok:true issues:[]`。
